@@ -2,60 +2,122 @@
 <html lang="es">
 <head>
   <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>WiFi Survey - Interfaz</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
+  <title>WiFi Survey — Mobile</title>
+
+  <!-- Google Font -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+
   <link rel="stylesheet" href="/static/style.css">
-  <!-- Chart.js desde CDN para gráficos rápidos -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
-  <div class="container">
-    <header>
-      <h1>WiFi Survey</h1>
-      <p class="muted">Mediciones desde Termux — RSSI, throughput, latencia. Interfaz mejorada.</p>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2L3 7v6c0 5 3.7 9.6 9 11 5.3-1.4 9-6 9-11V7l-9-5z"></path></svg>
+        <div>
+          <div class="title">WiFi Survey</div>
+          <div class="subtitle">Mediciones desde Termux · adaptable móvil</div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="themeToggle" class="icon-btn" title="Alternar tema">
+          <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><path fill="currentColor" d="M12 3a1 1 0 0 1 1 1v1a1 1 0 0 1-2 0V4a1 1 0 0 1 1-1zm0 16a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM4.22 5.47a1 1 0 0 1 1.41 0l0.7 0.7a1 1 0 0 1-1.42 1.42l-0.7-0.7a1 1 0 0 1 0-1.42zM17.66 18.9a1 1 0 0 1 0 1.41l-0.7 0.7a1 1 0 1 1-1.42-1.42l0.7-0.7a1 1 0 0 1 1.42 0z"/></svg>
+        </button>
+        <div id="statusDot" class="status offline" title="Estado: esperando"></div>
+      </div>
     </header>
 
-    <section class="card">
-      <h2>Medición puntual</h2>
-      <div class="formrow">
-        <input id="device" placeholder="Nombre del dispositivo" value="S24FE">
-        <input id="point" placeholder="Punto (ej. A1)" value="P1">
-        <input id="run" type="number" min="1" value="1" style="width:80px">
-        <button id="runBtn" class="primary">Run Point</button>
-        <button id="downloadBtn">Descargar CSV</button>
-      </div>
-      <pre id="log" class="log">Salida...</pre>
-    </section>
+    <main class="container">
+      <section class="card quick">
+        <div class="row">
+          <div class="left">
+            <label class="label">Nombre del dispositivo</label>
+            <input id="device" type="text" placeholder="S24FE" value="S24FE" />
+          </div>
+          <div class="right">
+            <label class="label">Punto</label>
+            <input id="point" type="text" placeholder="A1" value="P1" />
+          </div>
+        </div>
 
-    <section class="card">
-      <h2>Encuesta (múltiples puntos)</h2>
-      <div class="formrow">
-        <input id="survey_device" placeholder="Nombre del dispositivo" value="S24FE">
-        <textarea id="points" placeholder="Lista de puntos separados por espacios o comas">A1 A2 A3 B1 B2 B3</textarea>
-        <label>Repeticiones:
-          <input id="repeats" type="number" min="1" value="2" style="width:80px">
-        </label>
-        <button id="startSurvey" class="primary">Start Survey</button>
-        <div id="surveyStatus" class="muted"></div>
-      </div>
-      <div id="surveyLog" class="log"></div>
-      <progress id="progressBar" value="0" max="100" style="width:100%; display:none"></progress>
-    </section>
+        <div class="row actions-row">
+          <div class="run-controls">
+            <label class="label">Repetición</label>
+            <input id="run" type="number" min="1" value="1" class="small-input"/>
+            <button id="runBtn" class="btn primary large">Run point</button>
+          </div>
 
-    <section class="card">
-      <h2>Resultados recientes</h2>
-      <table id="resultsTable">
-        <thead><tr><th>Punto</th><th>RSSI (dBm)</th><th>DL Mbps</th><th>UL Mbps</th><th>Ping avg ms</th><th>Raw</th></tr></thead>
-        <tbody></tbody>
-      </table>
-      <canvas id="throughputChart" height="80"></canvas>
-    </section>
+          <div class="secondary-controls">
+            <button id="downloadBtn" class="btn">Descargar CSV</button>
+            <button id="showRecentBtn" class="btn">Resultados</button>
+          </div>
+        </div>
 
-    <footer>
-      <small class="muted">Asegúrate de editar <code>app.py</code> y configurar <code>SERVER_IP</code> correctamente.</small>
+        <div id="runToast" class="toast" hidden></div>
+      </section>
+
+      <section class="card survey">
+        <div class="section-header">
+          <h3>Encuesta</h3>
+          <div class="hint">Pega puntos separados por espacios o comas</div>
+        </div>
+
+        <textarea id="points" placeholder="A1 A2 A3 B1 B2 B3">A1 A2 A3 B1 B2 B3</textarea>
+
+        <div class="row">
+          <div>
+            <label class="label">Repeticiones</label>
+            <input id="repeats" type="number" min="1" value="2" class="small-input"/>
+          </div>
+          <div style="flex:1"></div>
+          <div>
+            <button id="startSurvey" class="btn primary">Iniciar encuesta</button>
+            <button id="cancelTask" class="btn danger" disabled>Cancelar</button>
+          </div>
+        </div>
+
+        <div id="surveyArea" class="survey-area" hidden>
+          <div class="survey-meta">
+            <div id="surveyStatus" class="muted">Sin tarea</div>
+            <progress id="progressBar" value="0" max="100"></progress>
+          </div>
+          <div id="surveyLog" class="log small">Logs de encuesta</div>
+        </div>
+      </section>
+
+      <section class="card results">
+        <div class="section-header">
+          <h3>Resultados recientes</h3>
+          <div class="hint">Últimas mediciones (guardadas en CSV y raw_results)</div>
+        </div>
+
+        <div id="resultsList" class="results-list"></div>
+
+        <div class="charts">
+          <div class="chart-card">
+            <canvas id="throughputChart" height="120"></canvas>
+          </div>
+          <div class="stats-card">
+            <h4>Resumen</h4>
+            <div id="summary" class="summary">
+              <div><strong id="avgRssi">—</strong><div class="muted">RSSI med</div></div>
+              <div><strong id="avgDl">—</strong><div class="muted">DL avg</div></div>
+              <div><strong id="avgUl">—</strong><div class="muted">UL avg</div></div>
+            </div>
+            <button id="exportJsonBtn" class="btn">Exportar JSON recientes</button>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <footer class="footer">
+      <div class="muted">Servidor: <span id="serverIp">192.168.1.10</span> · UI local</div>
     </footer>
   </div>
 
-  <script src="/static/app.js"></script>
 </body>
 </html>
