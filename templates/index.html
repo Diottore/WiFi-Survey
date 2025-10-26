@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>WiFi Survey - Interfaz</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <!-- Chart.js desde CDN para gráficos rápidos -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>WiFi Survey</h1>
+      <p class="muted">Mediciones desde Termux — RSSI, throughput, latencia. Interfaz mejorada.</p>
+    </header>
+
+    <section class="card">
+      <h2>Medición puntual</h2>
+      <div class="formrow">
+        <input id="device" placeholder="Nombre del dispositivo" value="S24FE">
+        <input id="point" placeholder="Punto (ej. A1)" value="P1">
+        <input id="run" type="number" min="1" value="1" style="width:80px">
+        <button id="runBtn" class="primary">Run Point</button>
+        <button id="downloadBtn">Descargar CSV</button>
+      </div>
+      <pre id="log" class="log">Salida...</pre>
+    </section>
+
+    <section class="card">
+      <h2>Encuesta (múltiples puntos)</h2>
+      <div class="formrow">
+        <input id="survey_device" placeholder="Nombre del dispositivo" value="S24FE">
+        <textarea id="points" placeholder="Lista de puntos separados por espacios o comas">A1 A2 A3 B1 B2 B3</textarea>
+        <label>Repeticiones:
+          <input id="repeats" type="number" min="1" value="2" style="width:80px">
+        </label>
+        <button id="startSurvey" class="primary">Start Survey</button>
+        <div id="surveyStatus" class="muted"></div>
+      </div>
+      <div id="surveyLog" class="log"></div>
+      <progress id="progressBar" value="0" max="100" style="width:100%; display:none"></progress>
+    </section>
+
+    <section class="card">
+      <h2>Resultados recientes</h2>
+      <table id="resultsTable">
+        <thead><tr><th>Punto</th><th>RSSI (dBm)</th><th>DL Mbps</th><th>UL Mbps</th><th>Ping avg ms</th><th>Raw</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <canvas id="throughputChart" height="80"></canvas>
+    </section>
+
+    <footer>
+      <small class="muted">Asegúrate de editar <code>app.py</code> y configurar <code>SERVER_IP</code> correctamente.</small>
+    </footer>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

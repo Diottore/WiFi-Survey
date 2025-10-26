@@ -1,0 +1,7 @@
+raw_results/
+*.pyc
+__pycache__/
+.venv/
+.env
+.DS_Store
+wifi_survey_results.csv
