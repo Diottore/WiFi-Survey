@@ -40,12 +40,17 @@
   const exportJsonBtn = $('exportJsonBtn'), clearResultsBtn = $('clearResultsBtn'), statusDot = $('statusDot');
   const surveyDeviceEl = $('survey_device'), fabRun = $('fabRun');
   const manualCheckbox = $('manual_confirm'), proceedBtn = $('proceedBtn');
+  const toggleDL = $('toggleDL'), toggleUL = $('toggleUL'), togglePing = $('togglePing');
+  const searchInput = $('searchInput'), autoscrollToggle = $('autoscrollToggle');
+  const rawModal = $('rawModal'), rawContent = $('rawContent'), closeModal = $('closeModal');
 
   // Buffers and state
   let resultBuffer = [];
   let flushing = false;
   let results = [];
   let currentTaskId = null;
+  let filteredResults = [];
+  let searchQuery = '';
 
   // Chart
   const ctx = document.getElementById('throughputChart').getContext('2d');
@@ -76,34 +81,52 @@
   const chartCard = document.querySelector('.chart-card') || document.body;
   ro.observe(chartCard);
 
-  function norm(s){ if(s===null||s===undefined) return ''; return String(s).trim().replace(/\s+/g,' '); }
+  // Dataset toggle handlers
+  if(toggleDL) toggleDL.addEventListener('change', () => {
+    chart.data.datasets[0].hidden = !toggleDL.checked;
+    chart.update();
+  });
+  if(toggleUL) toggleUL.addEventListener('change', () => {
+    chart.data.datasets[1].hidden = !toggleUL.checked;
+    chart.update();
+  });
+  if(togglePing) togglePing.addEventListener('change', () => {
+    chart.data.datasets[2].hidden = !togglePing.checked;
+    chart.update();
+  });
 
-  function pushResult(r){
-    if(!r) return;
-    resultBuffer.push(r);
-    if(!flushing){
-      flushing = true;
-      requestAnimationFrame(() => flushResults());
+  // Raw JSON modal handlers
+  if(closeModal) closeModal.addEventListener('click', () => {
+    rawModal.hidden = true;
+  });
+  if(rawModal) rawModal.addEventListener('click', (e) => {
+    if(e.target === rawModal) rawModal.hidden = true;
+  });
+
+  // Search/filter handler
+  if(searchInput) searchInput.addEventListener('input', (e) => {
+    searchQuery = e.target.value.toLowerCase().trim();
+    filterAndRenderResults();
+  });
+
+  function filterAndRenderResults(){
+    if(!searchQuery){
+      filteredResults = results.slice();
+    } else {
+      filteredResults = results.filter(r => {
+        const point = (r.point || '').toLowerCase();
+        const ssid = (r.ssid || '').toLowerCase();
+        const device = (r.device || '').toLowerCase();
+        return point.includes(searchQuery) || ssid.includes(searchQuery) || device.includes(searchQuery);
+      });
     }
+    renderResults();
   }
 
-  function flushResults(){
-    if(resultBuffer.length===0){ flushing=false; return; }
+  function renderResults(){
+    resultsList.innerHTML = '';
     const frag = document.createDocumentFragment();
-    while(resultBuffer.length){
-      const r = resultBuffer.shift();
-      r.point = norm(r.point);
-      r.ssid = norm(r.ssid);
-      r.bssid = norm(r.bssid);
-      r.rssi = norm(r.rssi);
-      r.iperf_dl_mbps = r.iperf_dl_mbps ?? r.dl_mbps ?? r.dl ?? 0;
-      r.iperf_ul_mbps = r.iperf_ul_mbps ?? r.ul_mbps ?? r.ul ?? 0;
-      r.ping_avg = r.ping_avg ?? r.ping_avg_ms ?? r.ping?.avg_ms ?? '';
-      r.ping_jitter = r.ping_jitter ?? r.ping_jitter_ms ?? r.ping?.jitter_ms ?? '';
-
-      results.unshift(r);
-      if(results.length>300) results.pop();
-
+    filteredResults.forEach(r => {
       const card = document.createElement('div');
       card.className = 'result-card';
       card.innerHTML = `
@@ -119,10 +142,60 @@
           <div class="muted" style="font-size:.85rem">UL ${r.iperf_ul_mbps ?? '—'} Mbps</div>
           <div style="margin-top:6px"><span class="muted">Ping: </span><strong>${r.ping_avg ?? '—'}</strong> ms</div>
           <div style="margin-top:2px"><span class="muted">Jitter: </span><strong>${r.ping_jitter ?? '—'}</strong> ms</div>
-          <div style="margin-top:6px"><a href="/raw/${(r.raw_file||'').split('/').pop()}" target="_blank" class="muted">raw</a></div>
+          <div style="margin-top:6px"><a href="#" class="muted raw-link" data-file="${(r.raw_file||'').split('/').pop()}">raw</a></div>
         </div>
       `;
       frag.appendChild(card);
+    });
+    resultsList.appendChild(frag);
+
+    // Attach event listeners to raw links
+    document.querySelectorAll('.raw-link').forEach(link => {
+      link.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const file = e.target.getAttribute('data-file');
+        if(!file) return;
+        try {
+          const res = await fetch(`/raw/${file}`);
+          const json = await res.json();
+          rawContent.textContent = JSON.stringify(json, null, 2);
+          rawModal.hidden = false;
+        } catch(err){
+          rawContent.textContent = 'Error loading raw data: ' + err.message;
+          rawModal.hidden = false;
+        }
+      });
+    });
+  }
+
+  function norm(s){ if(s===null||s===undefined) return ''; return String(s).trim().replace(/\s+/g,' '); }
+
+  function pushResult(r){
+    if(!r) return;
+    resultBuffer.push(r);
+    if(!flushing){
+      flushing = true;
+      requestAnimationFrame(() => flushResults());
+    }
+  }
+
+  function flushResults(){
+    if(resultBuffer.length===0){ flushing=false; return; }
+    const scrollToTop = autoscrollToggle && autoscrollToggle.checked;
+    
+    while(resultBuffer.length){
+      const r = resultBuffer.shift();
+      r.point = norm(r.point);
+      r.ssid = norm(r.ssid);
+      r.bssid = norm(r.bssid);
+      r.rssi = norm(r.rssi);
+      r.iperf_dl_mbps = r.iperf_dl_mbps ?? r.dl_mbps ?? r.dl ?? 0;
+      r.iperf_ul_mbps = r.iperf_ul_mbps ?? r.ul_mbps ?? r.ul ?? 0;
+      r.ping_avg = r.ping_avg ?? r.ping_avg_ms ?? r.ping?.avg_ms ?? '';
+      r.ping_jitter = r.ping_jitter ?? r.ping_jitter_ms ?? r.ping?.jitter_ms ?? '';
+
+      results.unshift(r);
+      if(results.length>300) results.pop();
 
       const label = r.point || ('pt' + Date.now());
       chart.data.labels.unshift(label);
@@ -137,7 +210,10 @@
       }
     }
 
-    resultsList.prepend(frag);
+    filterAndRenderResults();
+    if(scrollToTop && resultsList){
+      resultsList.scrollTop = 0;
+    }
     chart.update('active');
     updateSummary();
     flushing = false;
@@ -262,7 +338,17 @@
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'wifi_recent.json'; a.click();
     URL.revokeObjectURL(a.href);
   });
-  clearResultsBtn && clearResultsBtn.addEventListener('click', ()=> { results=[]; resultsList.innerHTML=''; chart.data.labels=[]; chart.data.datasets.forEach(ds=>ds.data=[]); chart.update(); updateSummary(); });
+  clearResultsBtn && clearResultsBtn.addEventListener('click', ()=> { 
+    results=[]; 
+    filteredResults=[];
+    searchQuery='';
+    if(searchInput) searchInput.value = '';
+    resultsList.innerHTML=''; 
+    chart.data.labels=[]; 
+    chart.data.datasets.forEach(ds=>ds.data=[]); 
+    chart.update(); 
+    updateSummary(); 
+  });
 
   function setStatus(ok){ statusDot.className = ok ? 'status online' : 'status offline'; }
   (async ()=>{ try { const r = await fetch('/list_raw'); setStatus(r.ok); } catch(e){ setStatus(false); } })();

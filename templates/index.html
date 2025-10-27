@@ -123,6 +123,18 @@
             <small class="muted">Últimas mediciones</small>
           </div>
 
+          <div class="controls-row">
+            <div class="toggles-area">
+              <label><input type="checkbox" id="toggleDL" checked> DL</label>
+              <label><input type="checkbox" id="toggleUL" checked> UL</label>
+              <label><input type="checkbox" id="togglePing" checked> Ping</label>
+            </div>
+            <input type="text" id="searchInput" placeholder="Buscar por punto, SSID o device" class="search-input">
+            <label class="autoscroll-label">
+              <input type="checkbox" id="autoscrollToggle" checked> Autoscroll
+            </label>
+          </div>
+
           <div id="resultsList" class="results-list" role="list" aria-live="polite"></div>
 
           <div class="charts-row">
@@ -157,6 +169,17 @@
         <button id="btn-go-to-results" class="btn small">Ir a Resultados</button>
       </div>
     </nav>
+
+    <!-- Modal for raw JSON -->
+    <div id="rawModal" class="modal-backdrop" hidden>
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3>Raw JSON</h3>
+          <button id="closeModal" class="btn small">Cerrar</button>
+        </div>
+        <pre id="rawContent" class="raw-content"></pre>
+      </div>
+    </div>
 
   </div>
 </body>
