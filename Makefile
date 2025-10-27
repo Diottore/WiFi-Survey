@@ -14,11 +14,26 @@ install-dev:  ## Install development dependencies
 	pip install pylint flake8 black isort pre-commit
 	pre-commit install
 
-test:  ## Run syntax checks
+test:  ## Run syntax checks and unit tests
 	@echo "Checking Python syntax..."
 	python3 -m py_compile app.py
 	python3 -m py_compile iperf3_automation.py
+	python3 -m py_compile validation.py
 	@echo "✓ Syntax checks passed"
+	@echo ""
+	@echo "Running unit tests..."
+	python3 -m unittest test_validation -v
+	@echo ""
+	@echo "✓ All tests passed"
+	@echo ""
+	@echo "Note: Integration tests require Flask to be installed."
+	@echo "Run 'make test-integration' after 'make install' to run integration tests."
+
+test-integration:  ## Run integration tests (requires Flask)
+	@echo "Checking Flask availability..."
+	@python3 -c "import flask" 2>/dev/null && echo "✓ Flask is available" || (echo "⚠️  Flask not installed. Run 'make install' to install dependencies." && exit 1)
+	@echo "Running integration tests..."
+	python3 -m unittest test_api_integration -v
 
 lint:  ## Run linters
 	@echo "Running flake8..."

@@ -57,6 +57,67 @@
   const surveyArea = $('surveyArea'), surveyLog = $('surveyLog'), resultsList = $('resultsList'), emptyState=$('emptyState');
   const avgRssi = $('avgRssi'), avgDl = $('avgDl'), avgUl = $('avgUl'), avgPing = $('avgPing'), totalTests = $('totalTests');
 
+  // ===== Error Handling & Validation =====
+  function clearFieldError(field) {
+    if (!field) return;
+    field.classList.remove('error');
+    const errorMsg = field.parentElement?.querySelector('.error-message');
+    if (errorMsg) errorMsg.remove();
+  }
+
+  function showFieldError(field, message) {
+    if (!field) return;
+    field.classList.add('error');
+    clearFieldError(field); // Remove old error message first
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'error-message';
+    errorDiv.textContent = message;
+    field.parentElement?.appendChild(errorDiv);
+  }
+
+  function clearAllErrors() {
+    document.querySelectorAll('.error').forEach(el => el.classList.remove('error'));
+    document.querySelectorAll('.error-message').forEach(el => el.remove());
+  }
+
+  function handleApiError(error, statusEl, fallbackMessage = 'Error desconocido') {
+    let errorMessage = fallbackMessage;
+    let fieldName = null;
+
+    if (error && typeof error === 'object') {
+      errorMessage = error.error || error.message || fallbackMessage;
+      fieldName = error.field;
+    } else if (typeof error === 'string') {
+      errorMessage = error;
+    }
+
+    // Display general error message
+    if (statusEl) {
+      statusEl.textContent = `❌ ${errorMessage}`;
+      statusEl.style.color = '#ef4444';
+    }
+
+    // Highlight specific field if provided
+    if (fieldName) {
+      const field = $(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+      if (field) {
+        showFieldError(field, errorMessage);
+        field.focus();
+      }
+    }
+
+    return errorMessage;
+  }
+
+  // Add input event listeners to clear errors on change
+  [deviceEl, pointEl, runEl, pointsEl, repeatsEl].forEach(el => {
+    if (el) {
+      el.addEventListener('input', () => clearFieldError(el));
+      el.addEventListener('focus', () => clearFieldError(el));
+    }
+  });
+
+
   // Live UI
   const liveVisuals = $('liveVisuals');
   const runProgressFill = $('runProgressFill'), progressPct = $('progressPct'), timeRemainingEl = $('timeRemaining'), liveSummary = $('liveSummary');
@@ -560,8 +621,11 @@
     const point=(pointEl?.value||'').trim();
     const runIndex=Number(runEl?.value)||1;
     
-    // Validación
+    // Client-side validation with visual feedback
+    let hasErrors = false;
+    
     if(!device){ 
+      showFieldError(deviceEl, 'El nombre del dispositivo es requerido');
       quickStatusEl && (quickStatusEl.textContent = '⚠️ Por favor ingresa el nombre del dispositivo');
       quickStatusEl && (quickStatusEl.style.color = '#ef4444');
       runBtn.disabled=false;
@@ -612,6 +676,7 @@
         runBtn.textContent = originalText;
         return; 
       }
+      
       lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
       // Resetear gráfica en vivo al iniciar nueva prueba
       liveChartReset(); 
@@ -647,8 +712,11 @@
     const repeats=Number(repeatsEl?.value)||1;
     const manual=!!manualCheckbox?.checked;
     
-    // Validación
+    // Client-side validation with visual feedback
+    let hasErrors = false;
+    
     if(!device){
+      showFieldError(surveyDeviceEl || deviceEl, 'El nombre del dispositivo es requerido');
       surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ Por favor ingresa el nombre del dispositivo');
       surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
       startSurveyBtn.disabled=false;
@@ -673,6 +741,7 @@
     const points= ptsRaw.includes(',') ? ptsRaw.split(',').map(s=>s.trim()).filter(Boolean) : ptsRaw.split(/\s+/).map(s=>s.trim()).filter(Boolean);
     
     if(points.length === 0){
+      showFieldError(pointsEl, 'No se detectaron puntos válidos');
       surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ No se detectaron puntos válidos');
       surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
       startSurveyBtn.disabled=false;
@@ -709,6 +778,7 @@
         startSurveyBtn.textContent = originalText;
         return; 
       }
+      
       lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
       cancelTaskBtn && (cancelTaskBtn.disabled=false);
       // Resetear gráfica en vivo al iniciar nueva encuesta
