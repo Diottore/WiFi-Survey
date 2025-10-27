@@ -37,7 +37,6 @@ if not os.path.exists(CSV_FILE):
 tasks = {}
 tasks_lock = threading.Lock()
 
-
 def run_cmd(cmd, timeout=300):
     try:
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
@@ -46,7 +45,6 @@ def run_cmd(cmd, timeout=300):
         return "", "timeout", -1
     except Exception as e:
         return "", str(e), -1
-
 
 def parse_ping_stats(ping_output):
     # Extract individual RTT times in ms
@@ -72,12 +70,10 @@ def parse_ping_stats(ping_output):
     # packet loss
     for line in ping_output.splitlines():
         if 'packet loss' in line:
-            # typical format: '3 packets transmitted, 3 received, 0% packet loss, time 2003ms'
             parts = line.split(',')
             if len(parts) >= 3:
                 ping_loss = parts[2].strip()
     return ping_avg, ping_jitter, ping_loss, times
-
 
 def measure_point(device, point, run_index):
     timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -155,12 +151,15 @@ def start_survey():
     device = payload.get("device", "phone")
     points = payload.get("points", [])
     repeats = int(payload.get("repeats", 1))
+    manual = bool(payload.get("manual", True))
     if not points:
         return jsonify({"ok": False, "error": "No points provided"}), 400
 
     task_id = str(uuid.uuid4())
     with tasks_lock:
-        tasks[task_id] = {"status": "queued", "total": len(points)*repeats, "done": 0, "logs": [], "results": []}
+        tasks[task_id] = {"status": "queued", "mode": ("manual" if manual else "auto"), "total": len(points)*repeats, "done": 0, "logs": [], "results": []}
+        # per-task event for manual proceed/cancel
+        tasks[task_id]["event"] = threading.Event()
 
     def worker():
         with tasks_lock:
@@ -169,9 +168,26 @@ def start_survey():
         for p in points:
             for r in range(1, repeats+1):
                 idx += 1
-                log_line = f"[{idx}/{len(points)*repeats}] Ejecutando {p} (run {r})..."
+                log_line = f"[{idx}/{len(points)*repeats}] Preparando {p} (run {r})..."
                 with tasks_lock:
                     tasks[task_id]["logs"].append(log_line)
+
+                # if manual mode, wait for user confirmation before measuring this point/run
+                if tasks[task_id].get("mode") == "manual":
+                    with tasks_lock:
+                        tasks[task_id]["status"] = "waiting"
+                        tasks[task_id]["logs"].append(f"Esperando confirmación para {p} run {r}...")
+                    # wait without holding the tasks_lock
+                    evt = tasks[task_id].get("event")
+                    if evt:
+                        evt.clear()
+                        evt.wait()  # blocked until /task_proceed or cancel sets the event
+                    with tasks_lock:
+                        if tasks[task_id].get("status") == "cancelled":
+                            tasks[task_id]["logs"].append("Tarea cancelada por usuario")
+                            return
+                        tasks[task_id]["status"] = "running"
+
                 try:
                     res = measure_point(device, p, r)
                     with tasks_lock:
@@ -183,16 +199,45 @@ def start_survey():
                         tasks[task_id]["logs"].append(f"ERROR en {p} run {r}: {e}")
         with tasks_lock:
             tasks[task_id]["status"] = "finished"
+
     t = threading.Thread(target=worker, daemon=True)
     t.start()
     return jsonify({"ok": True, "task_id": task_id})
+
+@app.route("/task_proceed/<task_id>", methods=["POST"])
+def task_proceed(task_id):
+    with tasks_lock:
+        if task_id not in tasks:
+            return jsonify({"ok": False, "error": "task not found"}), 404
+        t = tasks[task_id]
+        # set status back to running and release event
+        t["status"] = "running"
+        t["logs"].append("Usuario indicó continuar")
+        evt = t.get("event")
+        if evt:
+            evt.set()
+    return jsonify({"ok": True})
+
+@app.route("/task_cancel/<task_id>", methods=["POST"])
+def task_cancel(task_id):
+    with tasks_lock:
+        if task_id not in tasks:
+            return jsonify({"ok": False, "error": "task not found"}), 404
+        tasks[task_id]["status"] = "cancelled"
+        tasks[task_id]["logs"].append("Cancelado por solicitud del usuario")
+        evt = tasks[task_id].get("event")
+        if evt:
+            evt.set()
+    return jsonify({"ok": True})
 
 @app.route("/task_status/<task_id>")
 def task_status(task_id):
     with tasks_lock:
         if task_id not in tasks:
             return jsonify({"ok": False, "error": "task not found"}), 404
-        return jsonify(tasks[task_id])
+        # do not include the event object in the JSON response
+        t = {k: v for k, v in tasks[task_id].items() if k != "event"}
+        return jsonify(t)
 
 @app.route("/download_csv")
 def download_csv():

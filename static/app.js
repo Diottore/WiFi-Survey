@@ -1,5 +1,5 @@
 // static/app.js - Tabs (Pruebas / Resultados) + lógica previa (chart líneas)
-// Mantiene compatibilidad con endpoints y funciones anteriores.
+// Añadida interacción para modo manual: botón "Continuar" cuando la tarea está en estado waiting.
 
 (() => {
   const $ = id => document.getElementById(id);
@@ -7,10 +7,8 @@
   // Tabs
   const tabs = Array.from(document.querySelectorAll('.tab'));
   function showPanel(panelId) {
-    // panels
     const panels = document.querySelectorAll('.panel');
     panels.forEach(p => p.id === panelId ? p.classList.remove('hidden') : p.classList.add('hidden'));
-    // tab active
     tabs.forEach(t => {
       const target = t.getAttribute('data-target');
       if (target === panelId) {
@@ -21,22 +19,18 @@
         t.setAttribute('aria-selected', 'false');
       }
     });
-    // contextual UI tweaks
     const fab = $('fabRun');
     if (panelId === 'panel-tests') fab && (fab.style.display = 'inline-flex');
     else fab && (fab.style.display = 'none');
   }
   tabs.forEach(t => t.addEventListener('click', e => { showPanel(t.getAttribute('data-target')); }));
 
-  // quick nav bottom buttons
   const btnGoTests = $('btn-go-to-tests'), btnGoResults = $('btn-go-to-results');
   btnGoTests && btnGoTests.addEventListener('click', () => showPanel('panel-tests'));
   btnGoResults && btnGoResults.addEventListener('click', () => showPanel('panel-results'));
-
-  // Initialize to tests
   showPanel('panel-tests');
 
-  // Existing elements & logic
+  // Elements
   const deviceEl = $('device'), pointEl = $('point'), runEl = $('run'), runBtn = $('runBtn');
   const downloadBtn = $('downloadBtn'), pointsEl = $('points'), repeatsEl = $('repeats');
   const startSurveyBtn = $('startSurvey'), cancelTaskBtn = $('cancelTask');
@@ -45,13 +39,15 @@
   const avgPing = $('avgPing'), avgJitter = $('avgJitter');
   const exportJsonBtn = $('exportJsonBtn'), clearResultsBtn = $('clearResultsBtn'), statusDot = $('statusDot');
   const surveyDeviceEl = $('survey_device'), fabRun = $('fabRun');
+  const manualCheckbox = $('manual_confirm'), proceedBtn = $('proceedBtn');
 
   // Buffers and state
   let resultBuffer = [];
   let flushing = false;
   let results = [];
+  let currentTaskId = null;
 
-  // Chart: line (DL/UL/Ping)
+  // Chart
   const ctx = document.getElementById('throughputChart').getContext('2d');
   const chart = new Chart(ctx, {
     type: 'line',
@@ -75,10 +71,7 @@
     }
   });
 
-  // Debounce helper
   function debounce(fn, ms=150){ let t; return (...a)=>{ clearTimeout(t); t = setTimeout(()=>fn(...a), ms); } }
-
-  // Resize observer for chart
   const ro = new ResizeObserver(debounce(() => { try{ chart.resize(); }catch(e){} }, 120));
   const chartCard = document.querySelector('.chart-card') || document.body;
   ro.observe(chartCard);
@@ -99,7 +92,6 @@
     const frag = document.createDocumentFragment();
     while(resultBuffer.length){
       const r = resultBuffer.shift();
-      // normalize and map fields
       r.point = norm(r.point);
       r.ssid = norm(r.ssid);
       r.bssid = norm(r.bssid);
@@ -112,7 +104,6 @@
       results.unshift(r);
       if(results.length>300) results.pop();
 
-      // create card
       const card = document.createElement('div');
       card.className = 'result-card';
       card.innerHTML = `
@@ -133,16 +124,17 @@
       `;
       frag.appendChild(card);
 
-      // Chart update
       const label = r.point || ('pt' + Date.now());
       chart.data.labels.unshift(label);
       chart.data.datasets[0].data.unshift(Number(r.iperf_dl_mbps) || 0);
       chart.data.datasets[1].data.unshift(Number(r.iperf_ul_mbps) || 0);
       const pingNum = (r.ping_avg !== '' && !isNaN(Number(r.ping_avg))) ? Number(r.ping_avg) : null;
       chart.data.datasets[2].data.unshift(pingNum);
-      // Trim
-      const MAX = 40;
-      if(chart.data.labels.length > MAX){ chart.data.labels.pop(); chart.data.datasets.forEach(ds=>ds.data.pop()); }
+      const MAX_POINTS = 40;
+      if(chart.data.labels.length > MAX_POINTS){
+        chart.data.labels.pop();
+        chart.data.datasets.forEach(ds => ds.data.pop());
+      }
     }
 
     resultsList.prepend(frag);
@@ -182,7 +174,6 @@
     runBtn.disabled = false;
   });
 
-  // FAB quick-run
   if(fabRun) fabRun.addEventListener('click', ()=> runBtn.click());
 
   // Start survey
@@ -193,18 +184,35 @@
     if(!ptsRaw){ alert('Introduce puntos'); startSurveyBtn.disabled=false; return; }
     const points = ptsRaw.includes(',') ? ptsRaw.split(',').map(s=>s.trim()).filter(Boolean) : ptsRaw.split(/\s+/).map(s=>s.trim()).filter(Boolean);
     const repeats = Number(repeatsEl.value) || 1;
+    const manual = !!manualCheckbox?.checked;
     try {
       const res = await fetch('/start_survey', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({device, points, repeats})
+        body: JSON.stringify({device, points, repeats, manual})
       });
       const j = await res.json();
       if(!j.ok){ surveyLog.textContent = 'Error: ' + (j.error||''); startSurveyBtn.disabled=false; return; }
+      currentTaskId = j.task_id;
       pollTask(j.task_id);
       cancelTaskBtn.disabled = false;
-      // switch to Results automatically for live view
       showPanel('panel-results');
     } catch(e){ surveyLog.textContent = 'Error al iniciar: '+e; startSurveyBtn.disabled=false; }
+  });
+
+  // Proceed button (manual mode)
+  proceedBtn && proceedBtn.addEventListener('click', async ()=>{
+    if(!currentTaskId) return;
+    proceedBtn.disabled = true;
+    try {
+      const r = await fetch(`/task_proceed/${currentTaskId}`, { method:'POST' });
+      const js = await r.json();
+      if(js && js.ok){
+        proceedBtn.hidden = true;
+        proceedBtn.disabled = false;
+      } else {
+        surveyLog.textContent = 'Error al continuar: ' + (js.error||'');
+      }
+    } catch(e){ surveyLog.textContent = 'Error al enviar continuar: '+e; }
   });
 
   // Polling
@@ -223,20 +231,31 @@
         (js.results||[]).forEach(res => {
           if(!results.find(x=>x.raw_file===res.raw_file)) pushResult(res);
         });
-        if(js.status==='finished' || js.status==='error'){ clearInterval(pollHandle); pollHandle=null; startSurveyBtn.disabled=false; cancelTaskBtn.disabled=true; }
+        if(js.status==='waiting'){
+          proceedBtn && (proceedBtn.hidden = false);
+        } else {
+          proceedBtn && (proceedBtn.hidden = true);
+        }
+        if(js.status==='finished' || js.status==='error' || js.status==='cancelled'){
+          clearInterval(pollHandle); pollHandle=null; startSurveyBtn.disabled=false; cancelTaskBtn.disabled=true; proceedBtn && (proceedBtn.hidden = true);
+        }
       } catch(e){ surveyLog.textContent = 'Poll error: '+e; }
     }, 2000);
   }
 
-  cancelTaskBtn.addEventListener('click', ()=> {
+  cancelTaskBtn.addEventListener('click', async ()=> {
+    if(!currentTaskId) return;
+    try {
+      await fetch(`/task_cancel/${currentTaskId}`, { method:'POST' });
+    } catch(e){ console.warn('Cancel error', e); }
     if(pollHandle) clearInterval(pollHandle);
     pollHandle = null;
     startSurveyBtn.disabled=false;
     cancelTaskBtn.disabled=true;
     surveyStatus.textContent = 'Cancelado';
+    proceedBtn && (proceedBtn.hidden = true);
   });
 
-  // Download, export, clear
   downloadBtn.addEventListener('click', ()=> { window.location.href = '/download_csv'; });
   exportJsonBtn && exportJsonBtn.addEventListener('click', ()=> {
     const blob = new Blob([JSON.stringify(results.slice(0,200), null, 2)], {type: 'application/json'});
@@ -245,13 +264,9 @@
   });
   clearResultsBtn && clearResultsBtn.addEventListener('click', ()=> { results=[]; resultsList.innerHTML=''; chart.data.labels=[]; chart.data.datasets.forEach(ds=>ds.data=[]); chart.update(); updateSummary(); });
 
-  // status
   function setStatus(ok){ statusDot.className = ok ? 'status online' : 'status offline'; }
-
-  // initial health check
   (async ()=>{ try { const r = await fetch('/list_raw'); setStatus(r.ok); } catch(e){ setStatus(false); } })();
 
-  // expose for debug
   window.__ws = { pushResult, results, chart, showPanel };
 
 })();

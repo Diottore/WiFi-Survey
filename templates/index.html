@@ -89,6 +89,9 @@
             </div>
 
             <div class="survey-actions">
+              <label style="display:inline-flex;align-items:center;gap:8px;margin-right:8px">
+                <input id="manual_confirm" type="checkbox" checked /> <span class="muted">Pedir confirmación entre puntos</span>
+              </label>
               <button id="startSurvey" class="btn primary">Iniciar</button>
               <button id="cancelTask" class="btn danger" disabled>Cancelar</button>
             </div>
@@ -100,6 +103,9 @@
               <progress id="progressBar" value="0" max="100"></progress>
             </div>
             <div id="surveyLog" class="log" aria-live="polite">Logs</div>
+            <div style="margin-top:10px">
+              <button id="proceedBtn" class="btn primary" hidden>Continuar</button>
+            </div>
           </div>
         </section>
 
