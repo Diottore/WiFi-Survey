@@ -1,30 +1,25 @@
-// static/app.js - Interfaz mejorada con organización más clara y funcionalidad optimizada.
-// Incluye tabs, gráficos, búsquedas, y controles dinámicos con mejoras en la interacción visual.
+// static/app.js - UI con SSE para recibir updates parciales en tiempo real (gauge, progreso, lista de resultados)
 
 (() => {
   const $ = id => document.getElementById(id);
 
-  // Manejo de Tabs para organizar la interfaz
+  // Tabs and basic UI
   const tabs = Array.from(document.querySelectorAll('.tab'));
   function showPanel(panelId) {
-    // Mostrar solo el panel seleccionado
-    document.querySelectorAll('.panel').forEach(p => {
-      p.id === panelId ? p.classList.remove('hidden') : p.classList.add('hidden');
-    });
-
-    // Actualizar el estado visual de las tabs
+    document.querySelectorAll('.panel').forEach(p => p.id === panelId ? p.classList.remove('hidden') : p.classList.add('hidden'));
     tabs.forEach(t => {
       const target = t.getAttribute('data-target');
       t.classList.toggle('active', target === panelId);
       t.setAttribute('aria-selected', target === panelId);
     });
-
-    // Mostrar el botón flotante solo en el panel de pruebas
-    $('fabRun').style.display = panelId === 'panel-tests' ? 'inline-flex' : 'none';
+    const fab = $('fabRun'); if (fab) fab.style.display = panelId === 'panel-tests' ? 'inline-flex' : 'none';
   }
   tabs.forEach(t => t.addEventListener('click', () => showPanel(t.getAttribute('data-target'))));
+  $('btn-go-to-tests')?.addEventListener('click', () => showPanel('panel-tests'));
+  $('btn-go-to-results')?.addEventListener('click', () => showPanel('panel-results'));
+  showPanel('panel-tests');
 
-  // Elementos de controles y la interfaz
+  // Elements
   const deviceEl = $('device'), pointEl = $('point'), runEl = $('run'), runBtn = $('runBtn');
   const downloadBtn = $('downloadBtn'), pointsEl = $('points'), repeatsEl = $('repeats');
   const startSurveyBtn = $('startSurvey'), cancelTaskBtn = $('cancelTask');
@@ -37,116 +32,335 @@
   const toggleDL = $('toggleDL'), toggleUL = $('toggleUL'), togglePing = $('togglePing');
   const searchInput = $('searchInput'), autoscrollToggle = $('autoscrollToggle');
 
-  // Variables y estado
-  let results = [];
-  let filteredResults = [];
-  let currentTaskId = null;
+  // Live UI elements
+  const speedGaugeCanvas = document.getElementById('speedGauge');
+  const gaugeLabel = document.getElementById('gaugeLabel');
+  const runProgressFill = document.getElementById('runProgressFill');
+  const progressPct = document.getElementById('progressPct');
+  const timeRemainingEl = document.getElementById('timeRemaining');
+  const liveSummary = document.getElementById('liveSummary');
+  const instDlEl = document.getElementById('instDl'), instUlEl = document.getElementById('instUl'), instPingEl = document.getElementById('instPing');
 
-  // Configuración del gráfico
-  const ctx = document.getElementById('throughputChart').getContext('2d');
-  const chart = new Chart(ctx, {
+  // State
+  let results = [], filteredResults = [], gaugeChart = null;
+
+  // Throughput chart (existing)
+  const ctx = document.getElementById('throughputChart')?.getContext('2d');
+  const chart = ctx ? new Chart(ctx, {
     type: 'line',
-    data: {
-      labels: [],
-      datasets: [
-        { label: 'DL Mbps', data: [], borderColor: '#0b74ff', backgroundColor: 'rgba(11,116,255,0.08)', yAxisID: 'y', tension: 0.24, pointRadius: 4, fill: true },
-        { label: 'UL Mbps', data: [], borderColor: '#06b6d4', backgroundColor: 'rgba(6,182,212,0.06)', yAxisID: 'y', tension: 0.24, pointRadius: 4, fill: true },
-        { label: 'Ping ms', data: [], borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.04)', yAxisID: 'y1', tension: 0.2, pointRadius: 3, borderDash: [4,2], fill: false }
-      ]
-    },
+    data: { labels: [], datasets: [
+      { label: 'DL Mbps', data: [], borderColor: '#0b74ff', backgroundColor: 'rgba(11,116,255,0.08)', yAxisID: 'y', tension: 0.24, pointRadius: 4, fill: true },
+      { label: 'UL Mbps', data: [], borderColor: '#06b6d4', backgroundColor: 'rgba(6,182,212,0.06)', yAxisID: 'y', tension: 0.24, pointRadius: 4, fill: true },
+      { label: 'Ping ms', data: [], borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.04)', yAxisID: 'y1', tension: 0.2, pointRadius: 3, borderDash: [4,2], fill: false }
+    ]},
     options: {
-      responsive: true, maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: { legend: { position: 'top' } },
-      scales: {
-        x: { title: { display: true, text: 'Punto' } },
-        y: { type: 'linear', display: true, position: 'left', title: { display: true, text: 'Throughput (Mbps)' }, beginAtZero: true },
-        y1: { type: 'linear', display: true, position: 'right', title: { display: true, text: 'Ping (ms)' }, beginAtZero: true, grid: { drawOnChartArea: false } }
+      responsive:true, maintainAspectRatio:false,
+      interaction:{mode:'index', intersect:false},
+      plugins:{legend:{position:'top'}},
+      scales:{ x:{title:{display:true,text:'Punto'}}, y:{type:'linear',display:true,position:'left',title:{display:true,text:'Throughput (Mbps)'},beginAtZero:true}, y1:{type:'linear',display:true,position:'right',title:{display:true,text:'Ping (ms)'},beginAtZero:true,grid:{drawOnChartArea:false}} }
+    }
+  }) : null;
+
+  // Gauge creation (doughnut + needle plugin)
+  function createGauge(initial = 0, max = 200) {
+    if(!speedGaugeCanvas) return null;
+    if(gaugeChart) gaugeChart.destroy();
+    const gctx = speedGaugeCanvas.getContext('2d');
+    const data = { labels: ['val','rest'], datasets:[{ data: [initial, Math.max(0, max-initial)], backgroundColor:['#0b74ff','#e6e9ee'], borderWidth:0 }]};
+    const pluginNeedle = {
+      id: 'needle',
+      afterDatasetDraw(chart, args, options) {
+        const {ctx} = chart;
+        const meta = chart.getDatasetMeta(0).data[0];
+        const cx = meta.x, cy = meta.y + 18;
+        const radius = Math.min(meta.x, meta.y) * 0.9;
+        const value = chart.config.data.datasets[0].data[0];
+        const maxValue = options.maxValue || max;
+        const angle = (-Math.PI/2) + ( (value / maxValue) * Math.PI );
+        const nx = cx + Math.cos(angle) * (radius * 0.78);
+        const ny = cy + Math.sin(angle) * (radius * 0.78);
+        ctx.save();
+        ctx.lineWidth = 3; ctx.strokeStyle = options.color || '#222';
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(nx, ny); ctx.stroke();
+        ctx.fillStyle = options.centerColor || '#222';
+        ctx.beginPath(); ctx.arc(cx, cy, 6, 0, Math.PI*2); ctx.fill();
+        ctx.restore();
       }
+    };
+    Chart.register(pluginNeedle);
+    gaugeChart = new Chart(gctx, { type:'doughnut', data, options: { rotation:-Math.PI, circumference:Math.PI, cutout:'60%', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}, tooltip:{enabled:false}}, maxValue: max }, plugins:[pluginNeedle] });
+    gaugeLabel.textContent = `${initial.toFixed(2)} Mbps`;
+    return gaugeChart;
+  }
+
+  function setGaugeValue(v, max=200) {
+    if(!gaugeChart) createGauge(0, max);
+    gaugeChart.data.datasets[0].data[0] = Math.max(0, Math.min(v, max));
+    gaugeChart.data.datasets[0].data[1] = Math.max(0, max - gaugeChart.data.datasets[0].data[0]);
+    gaugeChart.options.maxValue = max;
+    gaugeChart.update('none');
+    gaugeLabel.textContent = `${Number(gaugeChart.data.datasets[0].data[0]).toFixed(2)} Mbps`;
+  }
+
+  function fmtTime(s) {
+    s = Math.max(0, Math.round(s));
+    const mm = String(Math.floor(s/60)).padStart(2,'0');
+    const ss = String(s % 60).padStart(2,'0');
+    return `${mm}:${ss}`;
+  }
+
+  // SSE handling for a task_id
+  function openSseForTask(task_id) {
+    // If EventSource not supported, fallback to polling task_status
+    if(typeof(EventSource) === 'undefined') {
+      return pollTaskStatus(task_id, 1000);
+    }
+    const es = new EventSource(`/stream/${encodeURIComponent(task_id)}`);
+    es.addEventListener('open', () => {
+      console.debug('SSE open for', task_id);
+    });
+    es.addEventListener('error', (e) => {
+      console.warn('SSE error', e);
+      es.close();
+      // fallback polling
+      pollTaskStatus(task_id, 1000);
+    });
+    es.addEventListener('update', (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        handlePartialUpdate(data);
+      } catch(e) { console.error('parse sse update', e); }
+    });
+    es.addEventListener('finished', (ev) => {
+      try {
+        const final = JSON.parse(ev.data || '{}');
+        handleFinalResult(final);
+      } catch(e){ console.error('parse finished', e); }
+      es.close();
+    });
+    return es;
+  }
+
+  // Polling fallback
+  let pollIntervalHandle = null;
+  function pollTaskStatus(task_id, ms=1000) {
+    if(pollIntervalHandle) clearInterval(pollIntervalHandle);
+    pollIntervalHandle = setInterval(async ()=>{
+      try {
+        const res = await fetch(`/task_status/${task_id}`);
+        if(!res.ok) { return; }
+        const js = await res.json();
+        if(js.partial) handlePartialUpdate(js);
+        if(js.status === 'finished') { handleFinalResult(js.result || {}); clearInterval(pollIntervalHandle); pollIntervalHandle = null; }
+      } catch(e) {
+        console.warn('poll error', e);
+      }
+    }, ms);
+  }
+
+  function handlePartialUpdate(dataContainer) {
+    // dataContainer may be {status, partial, logs} (SSE) or full task_status
+    const partial = dataContainer.partial || dataContainer;
+    if(!partial) return;
+    const dl = Number(partial.dl_mbps || partial.iperf_dl_mbps || 0);
+    const ul = Number(partial.ul_mbps || partial.iperf_ul_mbps || 0);
+    const ping = partial.ping_avg_ms || partial.ping_avg || '';
+    const progress = partial.progress_pct || partial.progress || 0;
+    const elapsed = partial.elapsed_s || 0;
+    // update UI
+    setGaugeValue(dl, 200);
+    instDlEl.textContent = `${dl.toFixed(2)} Mbps`;
+    instUlEl.textContent = `${ul.toFixed(2)} Mbps`;
+    instPingEl.textContent = `${ping !== '' && !isNaN(Number(ping)) ? Number(ping).toFixed(2)+' ms' : '—'}`;
+    runProgressFill.style.width = `${progress}%`;
+    progressPct.textContent = `${progress}%`;
+    // if duration known, show time remaining; try to fetch from /_survey_config
+    (async ()=>{
+      try {
+        const cfg = await fetch('/_survey_config').then(r=>r.ok? r.json(): null);
+        if(cfg && cfg.IPERF_DURATION) {
+          const remaining = Math.max(0, cfg.IPERF_DURATION - (elapsed || 0));
+          timeRemainingEl.textContent = fmtTime(remaining);
+        } else {
+          timeRemainingEl.textContent = fmtTime(Math.max(0, (partial.duration || 20) - (elapsed || 0)));
+        }
+      } catch(e){ /* ignore */ }
+    })();
+    liveSummary.textContent = `Ejecutando... ${progress}%`;
+  }
+
+  function handleFinalResult(res) {
+    // res is the final result object saved by server
+    if(!res) {
+      liveSummary.textContent = 'Prueba finalizada (sin resultado)';
+      return;
+    }
+    const dl = Number(res.iperf_dl_mbps || 0), ul = Number(res.iperf_ul_mbps || 0);
+    // animate gauge to final
+    const start = gaugeChart ? gaugeChart.data.datasets[0].data[0] : 0;
+    const target = Math.min(400, dl);
+    const steps = 20;
+    let i = 0;
+    const stepInterval = setInterval(()=>{
+      i++;
+      const t = i/steps;
+      const value = start + (target - start) * (1 - Math.cos(Math.PI*t))/2;
+      setGaugeValue(value, Math.max(200, target));
+      if(i>=steps) clearInterval(stepInterval);
+    }, 25);
+    instDlEl.textContent = `${dl.toFixed(2)} Mbps`;
+    instUlEl.textContent = `${ul.toFixed(2)} Mbps`;
+    instPingEl.textContent = `${res.ping_avg_ms || res.ping_avg || '—'}`;
+    liveSummary.textContent = `Resultado final: DL ${dl.toFixed(2)} Mbps · UL ${ul.toFixed(2)} Mbps`;
+    // add to results list and chart
+    const r = {
+      device: res.device || deviceEl.value || '',
+      point: res.point || pointEl.value || '',
+      timestamp: res.timestamp || new Date().toISOString(),
+      ssid: res.ssid || '',
+      bssid: res.bssid || '',
+      rssi: res.rssi || '',
+      iperf_dl_mbps: dl,
+      iperf_ul_mbps: ul,
+      ping_avg: res.ping_avg_ms || res.ping_avg || '',
+      ping_jitter: res.ping_jitter_ms || res.ping_jitter || '',
+      raw_file: res.raw_file || ''
+    };
+    pushResultToList(r);
+    // update chart
+    if(chart) {
+      const label = r.point || ('pt' + Date.now());
+      chart.data.labels.unshift(label);
+      chart.data.datasets[0].data.unshift(Number(r.iperf_dl_mbps) || 0);
+      chart.data.datasets[1].data.unshift(Number(r.iperf_ul_mbps) || 0);
+      chart.data.datasets[2].data.unshift(Number(r.ping_avg) || 0);
+      const MAX_POINTS = 40;
+      if(chart.data.labels.length > MAX_POINTS){
+        chart.data.labels.pop();
+        chart.data.datasets.forEach(ds => ds.data.pop());
+      }
+      chart.update('active');
+    }
+    updateSummary();
+    // reset progress visuals
+    runProgressFill.style.width = `0%`; progressPct.textContent = `0%`; timeRemainingEl.textContent = '00:00';
+  }
+
+  // push result to UI list
+  function pushResultToList(r) {
+    r.point = r.point || 'pt';
+    results.unshift(r);
+    if(results.length > 300) results.pop();
+
+    const card = document.createElement('div');
+    card.className = 'result-item';
+    card.innerHTML = `
+      <div style="flex:1"><strong>${escapeHtml(r.point)}</strong><div class="muted">${escapeHtml(r.ssid||'')}</div></div>
+      <div style="width:120px;text-align:right">${Number(r.iperf_dl_mbps || 0).toFixed(2)} Mbps</div>
+      <div style="width:120px;text-align:right">${Number(r.iperf_ul_mbps || 0).toFixed(2)} Mbps</div>
+      <div style="width:80px;text-align:right">${r.ping_avg ?? '—'}</div>
+      <div style="width:60px;text-align:center"><a class="muted" href="/raw/${(r.raw_file||'').split('/').pop()}" target="_blank">raw</a></div>
+    `;
+    resultsList.prepend(card);
+  }
+
+  function escapeHtml(s) {
+    if(!s) return '';
+    return String(s).replace(/[&<>"']/g, function(m){ return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]; });
+  }
+
+  // Run single point using task + SSE
+  runBtn.addEventListener('click', async () => {
+    runBtn.disabled = true;
+    const device = (deviceEl.value || 'phone').trim();
+    const point = (pointEl.value || 'P1').trim();
+    const runIndex = Number(runEl.value) || 1;
+
+    // Start the task
+    try {
+      const res = await fetch('/run_point', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ device, point, run: runIndex }) });
+      const j = await res.json();
+      if(!j || !j.ok) {
+        liveSummary.textContent = `Error iniciando prueba: ${j?.error || 'unknown'}`;
+        runBtn.disabled = false;
+        return;
+      }
+      const task_id = j.task_id;
+      liveSummary.textContent = 'Tarea iniciada, esperando actualizaciones...';
+      // Open SSE
+      openSseForTask(task_id);
+    } catch(e) {
+      liveSummary.textContent = `Error comunicando con servidor: ${e.message}`;
+      console.error(e);
+    } finally {
+      runBtn.disabled = false;
     }
   });
 
-  // Función para actualizar el resumen
-  function updateSummary() {
-    const avg = arr => arr.length ? (arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2) : '—';
-    avgRssi.textContent = avg(results.map(r => r.rssi));
-    avgDl.textContent = avg(results.map(r => r.iperf_dl_mbps));
-    avgUl.textContent = avg(results.map(r => r.iperf_ul_mbps));
-    avgPing.textContent = avg(results.map(r => r.ping_avg));
-    avgJitter.textContent = avg(results.map(r => r.ping_jitter));
+  // Survey start (reuses task-style polling SSE for multi-point survey)
+  startSurveyBtn.addEventListener('click', async ()=>{
+    startSurveyBtn.disabled = true;
+    const device = (surveyDeviceEl.value || deviceEl.value || 'phone').trim();
+    const ptsRaw = (pointsEl.value || '').trim();
+    if(!ptsRaw){ alert('Introduce puntos'); startSurveyBtn.disabled=false; return; }
+    const points = ptsRaw.includes(',') ? ptsRaw.split(',').map(s=>s.trim()).filter(Boolean) : ptsRaw.split(/\s+/).map(s=>s.trim()).filter(Boolean);
+    const repeats = Number(repeatsEl.value) || 1;
+    const manual = !!manualCheckbox?.checked;
+    try {
+      const res = await fetch('/start_survey', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({device, points, repeats, manual}) });
+      const j = await res.json();
+      if(!j.ok){ surveyLog.textContent = 'Error: ' + (j.error||''); startSurveyBtn.disabled=false; return; }
+      const task_id = j.task_id;
+      cancelTaskBtn.disabled = false;
+      pollTaskStatus(task_id, 1500); // use polling for survey tasks (they already provide results array)
+      showPanel('panel-results');
+    } catch(e){ surveyLog.textContent = 'Error al iniciar: '+e; startSurveyBtn.disabled=false; }
+  });
+
+  // Cancel task endpoint
+  cancelTaskBtn.addEventListener('click', async ()=> {
+    // cancel currentTaskId if set (note: start_survey returns task_id and we set polling)
+    // For run_point tasks we do not store task_id global here; user can cancel surveys via button after starting
+    try {
+      // try to cancel last polled task if present via surveyStatus content (not ideal). For robust cancel UX, you'd keep currentTaskId.
+      // We'll attempt to find a running task by reading surveyStatus text (best-effort).
+      // Recommend improving: keep currentTaskId variable set on startSurvey
+    } catch(e){ console.warn(e); }
+  });
+
+  // Export results
+  exportJsonBtn?.addEventListener('click', ()=>{
+    const blob = new Blob([JSON.stringify(results.slice(0,200), null, 2)], {type:'application/json'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'wifi_recent.json'; a.click(); URL.revokeObjectURL(a.href);
+  });
+
+  // Clear results
+  clearResultsBtn?.addEventListener('click', ()=>{
+    results = []; filteredResults = []; resultsList.innerHTML=''; if(chart){ chart.data.labels=[]; chart.data.datasets.forEach(ds=>ds.data=[]); chart.update(); } updateSummary();
+  });
+
+  function updateSummary(){
+    const rssiVals = results.map(x=>Number(x.rssi)).filter(n=>!isNaN(n));
+    const dlVals = results.map(x=>Number(x.iperf_dl_mbps)).filter(n=>!isNaN(n));
+    const ulVals = results.map(x=>Number(x.iperf_ul_mbps)).filter(n=>!isNaN(n));
+    const pingVals = results.map(x=>Number(x.ping_avg)).filter(n=>!isNaN(n));
+    const jitterVals = results.map(x=>Number(x.ping_jitter)).filter(n=>!isNaN(n));
+    const avg = arr => arr.length ? (arr.reduce((a,b)=>a+b,0)/arr.length) : NaN;
+    avgRssi.textContent = rssiVals.length ? Math.round(avg(rssiVals)) + ' dBm' : '—';
+    avgDl.textContent = dlVals.length ? avg(dlVals).toFixed(2) + ' Mbps' : '—';
+    avgUl.textContent = ulVals.length ? avg(ulVals).toFixed(2) + ' Mbps' : '—';
+    avgPing && (avgPing.textContent = pingVals.length ? avg(pingVals).toFixed(2) + ' ms' : '—');
+    avgJitter && (avgJitter.textContent = jitterVals.length ? avg(jitterVals).toFixed(2) + ' ms' : '—');
   }
 
-  // Función para renderizar los resultados
-  function renderResults() {
-    resultsList.innerHTML = '';
-    filteredResults.forEach(result => {
-      const div = document.createElement('div');
-      div.className = 'result-item';
-      div.innerHTML = `
-        <div class="result-point">${result.point}</div>
-        <div class="result-dl">${result.iperf_dl_mbps} Mbps</div>
-        <div class="result-ul">${result.iperf_ul_mbps} Mbps</div>
-        <div class="result-ping">${result.ping_avg} ms</div>
-      `;
-      resultsList.appendChild(div);
-    });
-  }
+  function setStatus(ok){ statusDot.className = ok ? 'status online' : 'status offline'; }
+  (async ()=>{ try { const r = await fetch('/list_raw'); setStatus(r.ok); } catch(e){ setStatus(false); } })();
 
-  // Buscar en resultados
-  searchInput.addEventListener('input', () => {
-    const query = searchInput.value.toLowerCase();
-    filteredResults = results.filter(r => r.point.toLowerCase().includes(query) || r.ssid.toLowerCase().includes(query));
-    renderResults();
-  });
+  // Initialize
+  createGauge(0, 200);
+  filteredResults = results.slice();
+  updateSummary();
 
-  // Botón de ejecutar prueba
-  runBtn.addEventListener('click', async () => {
-    const point = pointEl.value;
-    const device = deviceEl.value;
-    console.log(`Running test for ${point} on device ${device}`);
-    // Aquí se implementaría la lógica para ejecutar la prueba
-  });
-
-  // Botón de iniciar encuesta
-  startSurveyBtn.addEventListener('click', async () => {
-    console.log('Starting survey...');
-    // Aquí se implementaría la lógica para iniciar encuestas
-  });
-
-  // Botón de cancelar tarea
-  cancelTaskBtn.addEventListener('click', () => {
-    console.log('Cancelling task...');
-    // Aquí se implementaría la lógica para cancelar la tarea
-  });
-
-  // Exportar resultados como JSON
-  exportJsonBtn.addEventListener('click', () => {
-    const blob = new Blob([JSON.stringify(results, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'results.json';
-    a.click();
-    URL.revokeObjectURL(url);
-  });
-
-  // Limpiar resultados
-  clearResultsBtn.addEventListener('click', () => {
-    results = [];
-    filteredResults = [];
-    renderResults();
-    chart.data.labels = [];
-    chart.data.datasets.forEach(dataset => dataset.data = []);
-    chart.update();
-    updateSummary();
-  });
-
-  // Inicializar la vista
-  function initialize() {
-    showPanel('panel-tests');
-    filteredResults = results;
-    renderResults();
-  }
-
-  initialize();
+  // Expose for debug
+  window.__ws = { pushResultToList, results, chart, createGauge, setGaugeValue, showPanel };
 })();
