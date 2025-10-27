@@ -49,6 +49,62 @@ body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-i
 input[type="text"], input[type="number"], textarea{width:100%;padding:12px;border-radius:10px;border:1px solid #e6e9ef;font-size:clamp(.95rem,3.6vw,1rem);background:transparent}
 textarea{min-height:84px;resize:vertical;}
 
+/* Error states for validation */
+input.error, textarea.error, select.error{
+  border-color:var(--danger) !important;
+  background-color:#fef2f2;
+  animation:shake 0.3s ease-in-out;
+}
+input.error:focus, textarea.error:focus, select.error:focus{
+  outline:2px solid rgba(239, 68, 68, 0.2);
+  outline-offset:2px;
+}
+.error-message{
+  color:var(--danger);
+  font-size:0.8rem;
+  margin-top:4px;
+  display:flex;
+  align-items:center;
+  gap:4px;
+  font-weight:500;
+}
+.error-message::before{
+  content:'⚠️';
+  font-size:0.9rem;
+}
+@keyframes shake{
+  0%, 100%{transform:translateX(0)}
+  25%{transform:translateX(-6px)}
+  75%{transform:translateX(6px)}
+}
+
+/* Loading states */
+.btn:disabled{
+  opacity:0.6;
+  cursor:not-allowed;
+}
+.btn.loading{
+  position:relative;
+  color:transparent;
+}
+.btn.loading::after{
+  content:'';
+  position:absolute;
+  width:16px;
+  height:16px;
+  border:2px solid currentColor;
+  border-top-color:transparent;
+  border-radius:50%;
+  animation:spin 0.6s linear infinite;
+  top:50%;
+  left:50%;
+  margin:-8px 0 0 -8px;
+  color:inherit;
+}
+@keyframes spin{
+  to{transform:rotate(360deg)}
+}
+
 /* buttons */
 .btn{display:inline-flex;align-items:center;justify-content:center;padding:10px 12px;border-radius:10px;border:1px solid #e6e9ef;background:#fff;color:var(--text);min-height:40px;font-weight:600}
 .btn.primary{background:var(--primary);color:#fff;border-color:var(--primary)}

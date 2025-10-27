@@ -15,6 +15,7 @@ import configparser
 from datetime import datetime
 from flask import Flask, request, jsonify, send_file, render_template, abort, Response
 from flask_cors import CORS
+from validation import Validator, ValidationError
 
 # Setup logging
 logging.basicConfig(
@@ -433,35 +434,27 @@ def run_point():
     try:
         payload = request.json or {}
         
-        # Validate inputs
-        device = str(payload.get("device", "phone")).strip()
-        if not device or len(device) > 100:
-            return jsonify({"ok": False, "error": "Invalid device name"}), 400
-        
-        point = str(payload.get("point", "P1")).strip()
-        if not point or len(point) > 50:
-            return jsonify({"ok": False, "error": "Invalid point ID"}), 400
-        
+        # Validate inputs using centralized validator
         try:
-            run_index = int(payload.get("run", 1))
-            if run_index < 1 or run_index > 1000:
-                return jsonify({"ok": False, "error": "Run index must be between 1 and 1000"}), 400
-        except (ValueError, TypeError):
-            return jsonify({"ok": False, "error": "Invalid run index"}), 400
+            validated = Validator.validate_run_point_payload(
+                payload,
+                defaults={
+                    "device": "phone",
+                    "point": "P1",
+                    "run": 1,
+                    "duration": IPERF_DURATION,
+                    "parallel": IPERF_PARALLEL
+                }
+            )
+        except ValidationError as ve:
+            logger.warning(f"Validation error in run_point: {ve.message}")
+            return jsonify(ve.to_dict()), 400
         
-        try:
-            duration = int(payload.get("duration", IPERF_DURATION))
-            if duration < 1 or duration > 300:
-                return jsonify({"ok": False, "error": "Duration must be between 1 and 300 seconds"}), 400
-        except (ValueError, TypeError):
-            return jsonify({"ok": False, "error": "Invalid duration"}), 400
-        
-        try:
-            parallel = int(payload.get("parallel", IPERF_PARALLEL))
-            if parallel < 1 or parallel > 16:
-                return jsonify({"ok": False, "error": "Parallel streams must be between 1 and 16"}), 400
-        except (ValueError, TypeError):
-            return jsonify({"ok": False, "error": "Invalid parallel streams"}), 400
+        device = validated["device"]
+        point = validated["point"]
+        run_index = validated["run"]
+        duration = validated["duration"]
+        parallel = validated["parallel"]
         
         task_id = str(uuid.uuid4())
         with tasks_lock:
@@ -485,8 +478,11 @@ def run_point():
         return jsonify({"ok": True, "task_id": task_id})
     
     except Exception as e:
-        logger.error(f"Error in run_point: {e}")
-        return jsonify({"ok": False, "error": "Internal server error"}), 500
+        logger.error(f"Error in run_point: {e}", exc_info=True)
+        return jsonify({
+            "ok": False,
+            "error": "Error interno del servidor. Por favor, inténtalo de nuevo."
+        }), 500
 
 @app.route("/start_survey", methods=["POST"])
 def start_survey():
@@ -494,39 +490,23 @@ def start_survey():
     try:
         payload = request.json or {}
         
-        # Validate device
-        device = str(payload.get("device", "phone")).strip()
-        if not device or len(device) > 100:
-            return jsonify({"ok": False, "error": "Invalid device name"}), 400
-        
-        # Validate points
-        points = payload.get("points", [])
-        if isinstance(points, str):
-            points = points.split() if points.strip() else []
-        
-        if not points:
-            return jsonify({"ok": False, "error": "No points provided"}), 400
-        
-        if len(points) > 1000:
-            return jsonify({"ok": False, "error": "Too many points (max 1000)"}), 400
-        
-        # Validate each point
-        validated_points = []
-        for p in points:
-            p_str = str(p).strip()
-            if not p_str or len(p_str) > 50:
-                return jsonify({"ok": False, "error": f"Invalid point: {p}"}), 400
-            validated_points.append(p_str)
-        
-        # Validate repeats
+        # Validate inputs using centralized validator
         try:
-            repeats = int(payload.get("repeats", 1))
-            if repeats < 1 or repeats > 100:
-                return jsonify({"ok": False, "error": "Repeats must be between 1 and 100"}), 400
-        except (ValueError, TypeError):
-            return jsonify({"ok": False, "error": "Invalid repeats value"}), 400
+            validated = Validator.validate_start_survey_payload(
+                payload,
+                defaults={
+                    "device": "phone",
+                    "repeats": 1
+                }
+            )
+        except ValidationError as ve:
+            logger.warning(f"Validation error in start_survey: {ve.message}")
+            return jsonify(ve.to_dict()), 400
         
-        manual = bool(payload.get("manual", False))
+        device = validated["device"]
+        validated_points = validated["points"]
+        repeats = validated["repeats"]
+        manual = validated["manual"]
         
         parent_id = str(uuid.uuid4())
         with tasks_lock:
@@ -600,8 +580,11 @@ def start_survey():
         return jsonify({"ok": True, "task_id": parent_id})
     
     except Exception as e:
-        logger.error(f"Error in start_survey: {e}")
-        return jsonify({"ok": False, "error": "Internal server error"}), 500
+        logger.error(f"Error in start_survey: {e}", exc_info=True)
+        return jsonify({
+            "ok": False,
+            "error": "Error interno del servidor. Por favor, inténtalo de nuevo."
+        }), 500
 
 @app.route("/task_proceed/<task_id>", methods=["POST"])
 def task_proceed(task_id):

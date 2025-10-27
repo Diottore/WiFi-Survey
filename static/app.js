@@ -39,6 +39,67 @@
   const surveyArea = $('surveyArea'), surveyLog = $('surveyLog'), resultsList = $('resultsList'), emptyState=$('emptyState');
   const avgRssi = $('avgRssi'), avgDl = $('avgDl'), avgUl = $('avgUl'), avgPing = $('avgPing'), totalTests = $('totalTests');
 
+  // ===== Error Handling & Validation =====
+  function clearFieldError(field) {
+    if (!field) return;
+    field.classList.remove('error');
+    const errorMsg = field.parentElement?.querySelector('.error-message');
+    if (errorMsg) errorMsg.remove();
+  }
+
+  function showFieldError(field, message) {
+    if (!field) return;
+    field.classList.add('error');
+    clearFieldError(field); // Remove old error message first
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'error-message';
+    errorDiv.textContent = message;
+    field.parentElement?.appendChild(errorDiv);
+  }
+
+  function clearAllErrors() {
+    document.querySelectorAll('.error').forEach(el => el.classList.remove('error'));
+    document.querySelectorAll('.error-message').forEach(el => el.remove());
+  }
+
+  function handleApiError(error, statusEl, fallbackMessage = 'Error desconocido') {
+    let errorMessage = fallbackMessage;
+    let fieldName = null;
+
+    if (error && typeof error === 'object') {
+      errorMessage = error.error || error.message || fallbackMessage;
+      fieldName = error.field;
+    } else if (typeof error === 'string') {
+      errorMessage = error;
+    }
+
+    // Display general error message
+    if (statusEl) {
+      statusEl.textContent = `❌ ${errorMessage}`;
+      statusEl.style.color = '#ef4444';
+    }
+
+    // Highlight specific field if provided
+    if (fieldName) {
+      const field = $(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+      if (field) {
+        showFieldError(field, errorMessage);
+        field.focus();
+      }
+    }
+
+    return errorMessage;
+  }
+
+  // Add input event listeners to clear errors on change
+  [deviceEl, pointEl, runEl, pointsEl, repeatsEl].forEach(el => {
+    if (el) {
+      el.addEventListener('input', () => clearFieldError(el));
+      el.addEventListener('focus', () => clearFieldError(el));
+    }
+  });
+
+
   // Live UI
   const liveVisuals = $('liveVisuals');
   const runProgressFill = $('runProgressFill'), progressPct = $('progressPct'), timeRemainingEl = $('timeRemaining'), liveSummary = $('liveSummary');
@@ -503,29 +564,41 @@
   // Run quick
   runBtn && runBtn.addEventListener('click', async ()=>{
     runBtn.disabled=true;
+    clearAllErrors();
     quickStatusEl && (quickStatusEl.textContent = '');
     
     const device=(deviceEl?.value||'').trim();
     const point=(pointEl?.value||'').trim();
     const runIndex=Number(runEl?.value)||1;
     
-    // Validación
+    // Client-side validation with visual feedback
+    let hasErrors = false;
+    
     if(!device){ 
+      showFieldError(deviceEl, 'El nombre del dispositivo es requerido');
       quickStatusEl && (quickStatusEl.textContent = '⚠️ Por favor ingresa el nombre del dispositivo');
       quickStatusEl && (quickStatusEl.style.color = '#ef4444');
-      runBtn.disabled=false; 
-      return; 
+      hasErrors = true;
     }
     if(!point){ 
-      quickStatusEl && (quickStatusEl.textContent = '⚠️ Por favor ingresa el ID del punto');
-      quickStatusEl && (quickStatusEl.style.color = '#ef4444');
-      runBtn.disabled=false; 
-      return; 
+      showFieldError(pointEl, 'El ID del punto es requerido');
+      if (!hasErrors) {
+        quickStatusEl && (quickStatusEl.textContent = '⚠️ Por favor ingresa el ID del punto');
+        quickStatusEl && (quickStatusEl.style.color = '#ef4444');
+      }
+      hasErrors = true;
     }
-    if(runIndex < 1 || runIndex > 100){
-      quickStatusEl && (quickStatusEl.textContent = '⚠️ La repetición debe estar entre 1 y 100');
-      quickStatusEl && (quickStatusEl.style.color = '#ef4444');
-      runBtn.disabled=false;
+    if(runIndex < 1 || runIndex > 1000){
+      showFieldError(runEl, 'Debe estar entre 1 y 1000');
+      if (!hasErrors) {
+        quickStatusEl && (quickStatusEl.textContent = '⚠️ La repetición debe estar entre 1 y 1000');
+        quickStatusEl && (quickStatusEl.style.color = '#ef4444');
+      }
+      hasErrors = true;
+    }
+    
+    if (hasErrors) {
+      runBtn.disabled = false;
       return;
     }
     
@@ -533,16 +606,29 @@
     quickStatusEl && (quickStatusEl.style.color = '#0b74ff');
     
     try{
-      const res=await fetch('/run_point',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ device, point, run: runIndex }) });
-      const j=await res.json();
+      const res = await fetch('/run_point', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ device, point, run: runIndex }),
+        signal: AbortSignal.timeout(10000) // 10 second timeout
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: `Error del servidor (${res.status})` }));
+        handleApiError(errorData, quickStatusEl, 'Error al iniciar la prueba');
+        liveSummary && (liveSummary.textContent = `Error: ${errorData.error || 'Error desconocido'}`);
+        runBtn.disabled = false;
+        return;
+      }
+      
+      const j = await res.json();
       if(!j || !j.ok){ 
-        const errorMsg = j?.error || 'Error desconocido';
-        quickStatusEl && (quickStatusEl.textContent = `❌ Error: ${errorMsg}`);
-        quickStatusEl && (quickStatusEl.style.color = '#ef4444');
-        liveSummary && (liveSummary.textContent = `Error: ${errorMsg}`); 
+        handleApiError(j, quickStatusEl, 'Error al iniciar la prueba');
+        liveSummary && (liveSummary.textContent = `Error: ${j?.error || 'Error desconocido'}`); 
         runBtn.disabled=false; 
         return; 
       }
+      
       lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
       // Resetear gráfica en vivo al iniciar nueva prueba
       liveChartReset(); 
@@ -552,11 +638,16 @@
       liveSummary && (liveSummary.textContent='Tarea iniciada, esperando actualizaciones...'); 
       openSseForTask(j.task_id); 
       setMode('results');
-    }catch(e){ 
-      quickStatusEl && (quickStatusEl.textContent = `❌ Error de conexión: ${e.message}`);
-      quickStatusEl && (quickStatusEl.style.color = '#ef4444');
-      liveSummary && (liveSummary.textContent = `Error: ${e.message}`); 
-    } finally{ 
+    } catch(e) { 
+      if (e.name === 'AbortError' || e.name === 'TimeoutError') {
+        handleApiError({ error: 'Tiempo de espera agotado. Verifica tu conexión.' }, quickStatusEl);
+      } else if (e instanceof TypeError && e.message.includes('fetch')) {
+        handleApiError({ error: 'Error de red. Verifica que el servidor esté disponible.' }, quickStatusEl);
+      } else {
+        handleApiError({ error: `Error de conexión: ${e.message}` }, quickStatusEl);
+      }
+      liveSummary && (liveSummary.textContent = quickStatusEl?.textContent || 'Error'); 
+    } finally { 
       runBtn.disabled=false; 
     }
   });
@@ -564,6 +655,7 @@
   // Survey
   startSurveyBtn && startSurveyBtn.addEventListener('click', async ()=>{
     startSurveyBtn.disabled=true;
+    clearAllErrors();
     surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '');
     
     const device=(surveyDeviceEl?.value||deviceEl?.value||'').trim();
@@ -571,29 +663,41 @@
     const repeats=Number(repeatsEl?.value)||1;
     const manual=!!manualCheckbox?.checked;
     
-    // Validación
+    // Client-side validation with visual feedback
+    let hasErrors = false;
+    
     if(!device){
+      showFieldError(surveyDeviceEl || deviceEl, 'El nombre del dispositivo es requerido');
       surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ Por favor ingresa el nombre del dispositivo');
       surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
-      startSurveyBtn.disabled=false;
-      return;
+      hasErrors = true;
     }
     if(!ptsRaw){ 
-      surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ Por favor ingresa al menos un punto'); 
-      surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
-      startSurveyBtn.disabled=false; 
-      return; 
+      showFieldError(pointsEl, 'Debe proporcionar al menos un punto');
+      if (!hasErrors) {
+        surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ Por favor ingresa al menos un punto'); 
+        surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
+      }
+      hasErrors = true;
     }
     if(repeats < 1 || repeats > 100){
-      surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ Las repeticiones deben estar entre 1 y 100');
-      surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
-      startSurveyBtn.disabled=false;
+      showFieldError(repeatsEl, 'Debe estar entre 1 y 100');
+      if (!hasErrors) {
+        surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ Las repeticiones deben estar entre 1 y 100');
+        surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
+      }
+      hasErrors = true;
+    }
+    
+    if (hasErrors) {
+      startSurveyBtn.disabled = false;
       return;
     }
     
     const points= ptsRaw.includes(',') ? ptsRaw.split(',').map(s=>s.trim()).filter(Boolean) : ptsRaw.split(/\s+/).map(s=>s.trim()).filter(Boolean);
     
     if(points.length === 0){
+      showFieldError(pointsEl, 'No se detectaron puntos válidos');
       surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ No se detectaron puntos válidos');
       surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
       startSurveyBtn.disabled=false;
@@ -604,16 +708,29 @@
     surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#0b74ff');
     
     try{
-      const res=await fetch('/start_survey',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ device, points, repeats, manual }) });
-      const j=await res.json();
+      const res = await fetch('/start_survey', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ device, points, repeats, manual }),
+        signal: AbortSignal.timeout(10000) // 10 second timeout
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: `Error del servidor (${res.status})` }));
+        handleApiError(errorData, surveyStatusMsgEl, 'Error al iniciar la encuesta');
+        surveyLog && (surveyLog.textContent = 'Error: ' + (errorData.error || 'Error desconocido')); 
+        startSurveyBtn.disabled = false; 
+        return;
+      }
+      
+      const j = await res.json();
       if(!j.ok){ 
-        const errorMsg = j.error || 'Error desconocido';
-        surveyStatusMsgEl && (surveyStatusMsgEl.textContent = `❌ Error: ${errorMsg}`);
-        surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
-        surveyLog && (surveyLog.textContent='Error: ' + errorMsg); 
+        handleApiError(j, surveyStatusMsgEl, 'Error al iniciar la encuesta');
+        surveyLog && (surveyLog.textContent='Error: ' + (j.error || 'Error desconocido')); 
         startSurveyBtn.disabled=false; 
         return; 
       }
+      
       lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
       cancelTaskBtn && (cancelTaskBtn.disabled=false);
       // Resetear gráfica en vivo al iniciar nueva encuesta
@@ -622,11 +739,16 @@
       surveyStatusMsgEl && (surveyStatusMsgEl.textContent = `✅ Encuesta iniciada con ${points.length} punto(s)`);
       surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#10b981');
       openSseForTask(j.task_id); surveyArea && (surveyArea.hidden=false); setMode('results');
-    }catch(e){ 
-      surveyStatusMsgEl && (surveyStatusMsgEl.textContent = `❌ Error de conexión: ${e.message}`);
-      surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
-      surveyLog && (surveyLog.textContent='Error al iniciar: '+e); 
-    } finally{ 
+    } catch(e) { 
+      if (e.name === 'AbortError' || e.name === 'TimeoutError') {
+        handleApiError({ error: 'Tiempo de espera agotado. Verifica tu conexión.' }, surveyStatusMsgEl);
+      } else if (e instanceof TypeError && e.message.includes('fetch')) {
+        handleApiError({ error: 'Error de red. Verifica que el servidor esté disponible.' }, surveyStatusMsgEl);
+      } else {
+        handleApiError({ error: `Error de conexión: ${e.message}` }, surveyStatusMsgEl);
+      }
+      surveyLog && (surveyLog.textContent = surveyStatusMsgEl?.textContent || 'Error'); 
+    } finally { 
       startSurveyBtn.disabled=false; 
     }
   });
