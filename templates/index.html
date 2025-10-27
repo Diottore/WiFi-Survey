@@ -11,7 +11,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
   <script src="/static/app.js" defer></script>
   <style>
-    /* Pequeñas mejoras visuales para ordenar la UI y acomodar los nuevos controles */
+    /* Pequeñas mejoras visuales */
     .charts-row { display:flex; gap:16px; align-items:flex-start; }
     .chart-card { flex:1; min-height:260px; background:#fff; padding:12px; border-radius:8px; box-shadow:0 1px 4px rgba(0,0,0,0.05); }
     .gauge-card { width:320px; max-width:40%; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:12px; }
@@ -20,9 +20,17 @@
     .progress-bar > .fill { height:100%; background:linear-gradient(90deg,#0b74ff,#06b6d4); width:0%; transition:width 200ms linear; }
     .live-stats { margin-top:8px; font-size:0.95rem; color:#333; text-align:center; }
     .result-item { display:flex; gap:12px; padding:8px 6px; border-bottom:1px solid #f0f0f0; align-items:center; }
-    .result-item div { min-width: 60px; }
     .controls-row { display:flex; align-items:center; gap:12px; margin-bottom:8px; flex-wrap:wrap; }
     .summary-card { min-width:220px; }
+    .muted { color:#666; font-size:0.9rem; }
+    .card { background:#fff; padding:14px; border-radius:10px; box-shadow:0 1px 6px rgba(0,0,0,0.04); }
+    .card-header { margin-bottom:10px; }
+    .form-group { margin-bottom:10px; }
+    .grid { display:grid; grid-template-columns: 1fr 1fr 120px; gap:12px; align-items:start; }
+    .btn { padding:8px 12px; border-radius:8px; border:1px solid #ddd; background:#fff; cursor:pointer; }
+    .btn.primary { background:#0b74ff; color:#fff; border-color:#0b74ff; }
+    .btn.outline { background:#fff; border-color:#ccc; }
+    .fab { position:fixed; right:16px; bottom:86px; width:56px; height:56px; border-radius:28px; display:inline-flex; align-items:center; justify-content:center; background:#0b74ff; color:#fff; box-shadow:0 6px 18px rgba(11,116,255,0.14); border:none; cursor:pointer; }
   </style>
 </head>
 <body>
@@ -49,71 +57,96 @@
         <button class="tab" role="tab" aria-selected="false" data-target="panel-results" id="tab-results">Resultados</button>
       </nav>
 
+      <!-- Panel: Pruebas -->
       <section id="panel-tests" class="panel" role="tabpanel" aria-labelledby="tab-tests">
-        <section class="card quick">
+        <section class="card quick" aria-labelledby="quick-h">
           <div class="card-header">
-            <h2>Medición rápida</h2>
+            <h2 id="quick-h">Medición rápida</h2>
             <small class="muted">Ejecuta una medición puntual</small>
           </div>
 
           <div class="grid">
             <div class="form-group">
               <label for="device">Equipo bajo prueba (DUT) / Tester (teléfono)</label>
-              <input id="device" type="text" value="S24FE">
+              <input id="device" type="text" value="S24FE" inputmode="text" autocomplete="off" placeholder="p.ej. AP-Lobby-01 (DUT) o S24FE (teléfono)">
+              <small class="muted">Escribe el identificador del equipo que quieres usar como etiqueta.</small>
             </div>
             <div class="form-group">
               <label for="point">Punto</label>
-              <input id="point" type="text" value="P1">
+              <input id="point" type="text" value="P1" inputmode="text" autocomplete="off">
             </div>
             <div class="form-group narrow">
               <label for="run">Repetición</label>
-              <input id="run" type="number" min="1" value="1">
+              <input id="run" type="number" min="1" value="1" inputmode="numeric">
             </div>
 
-            <div class="controls" aria-hidden="false">
-              <button id="runBtn" class="btn primary large">Run</button>
+            <div class="controls" aria-hidden="false" style="grid-column:1 / -1; display:flex; gap:8px;">
+              <button id="runBtn" class="btn primary large" aria-live="polite">Run</button>
               <button id="downloadBtn" class="btn outline">CSV</button>
             </div>
           </div>
+        </section>
 
-          <!-- Live visual area: gauge + progress + live stats -->
-          <div style="display:flex; gap:16px; margin-top:12px; align-items:flex-start;">
-            <div class="gauge-card chart-card">
-              <canvas id="speedGauge" width="300" height="180" aria-label="Tacómetro de velocidad"></canvas>
-              <div class="live-stats" id="gaugeLabel">— Mbps</div>
+        <!-- Encuesta (restaurada) -->
+        <section class="card survey" aria-labelledby="survey-h" style="margin-top:14px;">
+          <div class="card-header">
+            <h3 id="survey-h">Encuesta</h3>
+            <small class="muted">Automatiza varias mediciones</small>
+          </div>
+
+          <div class="form-row">
+            <label for="survey_device">Nombre del equipo</label>
+            <input id="survey_device" type="text" value="S24FE" />
+          </div>
+
+          <div class="form-row">
+            <label for="points">Puntos (espacios o comas)</label>
+            <textarea id="points" placeholder="A1 A2 A3 B1 B2" rows="3" style="width:100%"></textarea>
+          </div>
+
+          <div class="form-row compact" style="display:flex; gap:10px; align-items:center; margin-top:8px;">
+            <div class="form-group narrow" style="min-width:120px;">
+              <label for="repeats">Repeticiones</label>
+              <input id="repeats" type="number" min="1" value="2">
             </div>
 
-            <div style="flex:1">
-              <div class="card chart-card">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                  <strong>Progreso de prueba</strong>
-                  <div id="timeRemaining">00:00</div>
-                </div>
-                <div class="progress-row" style="margin-top:8px;">
-                  <div class="progress-bar" style="flex:1"><div class="fill" id="runProgressFill"></div></div>
-                  <div style="width:110px; text-align:right;"><small id="progressPct">0%</small></div>
-                </div>
-                <div class="live-stats" id="liveSummary">Esperando ejecución...</div>
-              </div>
+            <label style="display:inline-flex;align-items:center;gap:8px;margin-right:8px">
+              <input id="manual_confirm" type="checkbox" checked /> <span class="muted">Pedir confirmación entre puntos</span>
+            </label>
 
-              <div style="margin-top:10px" class="card chart-card">
-                <strong>Lectura instantánea</strong>
-                <div style="display:flex; gap:12px; margin-top:8px;">
-                  <div><small class="muted">DL</small><div id="instDl" style="font-weight:700">— Mbps</div></div>
-                  <div><small class="muted">UL</small><div id="instUl" style="font-weight:700">— Mbps</div></div>
-                  <div><small class="muted">Ping</small><div id="instPing" style="font-weight:700">— ms</div></div>
-                </div>
-              </div>
+            <div style="margin-left:auto; display:flex; gap:8px;">
+              <button id="startSurvey" class="btn primary">Iniciar</button>
+              <button id="cancelTask" class="btn outline" disabled>Cancelar</button>
             </div>
           </div>
 
+          <div id="surveyArea" class="survey-area" hidden style="margin-top:12px;">
+            <div class="survey-meta" style="display:flex; gap:12px; align-items:center;">
+              <div id="surveyStatus" class="muted">Sin tarea</div>
+              <progress id="progressBar" value="0" max="100" style="flex:1"></progress>
+              <div style="width:60px; text-align:right;" id="progressPctSmall">0%</div>
+            </div>
+
+            <div id="surveyLog" class="log" aria-live="polite" style="margin-top:8px; max-height:180px; overflow:auto; background:#fafafa; padding:8px; border-radius:6px;">Logs</div>
+
+            <div style="margin-top:10px; display:flex; gap:8px;">
+              <button id="proceedBtn" class="btn primary" hidden>Continuar</button>
+              <div style="margin-left:auto" class="muted">Última tarea: <span id="lastSurveyId">—</span></div>
+            </div>
+          </div>
         </section>
+
+        <!-- FAB -->
+        <div class="fab-holder">
+          <button id="fabRun" class="fab" title="Run rápido" aria-label="Run rápido">▶</button>
+        </div>
       </section>
 
+      <!-- Panel: Resultados -->
       <section id="panel-results" class="panel hidden" role="tabpanel" aria-labelledby="tab-results">
-        <section class="card results">
+        <section class="card results" aria-labelledby="results-h">
           <div class="card-header">
-            <h3>Resultados recientes</h3>
+            <h3 id="results-h">Resultados recientes</h3>
             <small class="muted">Últimas mediciones</small>
           </div>
 
@@ -133,7 +166,7 @@
             <div style="flex:1">
               <div id="resultsList" class="results-list" role="list"></div>
             </div>
-            <div class="summary-card">
+            <div class="summary-card card">
               <h4>Resumen rápido</h4>
               <div style="display:grid; gap:8px; margin-top:8px;">
                 <div><div class="big" id="avgRssi">—</div><div class="muted">RSSI med</div></div>
