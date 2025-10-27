@@ -44,6 +44,7 @@
 
   // State
   let results = [], filteredResults = [], gaugeChart = null;
+  let lastSurveyTaskId = null;
 
   // Throughput chart
   const ctx = document.getElementById('throughputChart')?.getContext('2d');
@@ -173,7 +174,6 @@
 
   function handleFinalResult(res) {
     if(!res) { liveSummary.textContent = 'Prueba finalizada (sin resultado)'; return; }
-    // res may be array (survey) or object (single run)
     if(Array.isArray(res)) {
       // survey finished, append each
       res.forEach(r => pushResultToList(r));
@@ -272,22 +272,20 @@
       const j = await res.json();
       if(!j.ok){ surveyLog.textContent = 'Error: ' + (j.error||''); startSurveyBtn.disabled=false; return; }
       const task_id = j.task_id;
+      lastSurveyTaskId = task_id;
       cancelTaskBtn.disabled = false;
-      // For surveys we can SSE as well (stream will emit updates & finished)
+      // SSE will stream updates for the survey parent task
       openSseForTask(task_id);
       showPanel('panel-results');
     } catch(e){ surveyLog.textContent = 'Error al iniciar: '+e; startSurveyBtn.disabled=false; }
   });
 
-  // Proceed / Cancel for surveys
+  // Proceed / Cancel for surveys using lastSurveyTaskId (no prompt)
   proceedBtn && proceedBtn.addEventListener('click', async ()=>{
-    // expects the user to provide current task id (UI improvement: store last survey task id)
-    // For simplicity, prompt the task id
-    const task_id = prompt('Introduce task_id para proceder (si lo conoces):');
-    if(!task_id) return;
+    if(!lastSurveyTaskId){ alert('No hay encuesta en curso'); return; }
     proceedBtn.disabled = true;
     try {
-      const r = await fetch(`/task_proceed/${task_id}`, { method:'POST' });
+      const r = await fetch(`/task_proceed/${encodeURIComponent(lastSurveyTaskId)}`, { method:'POST' });
       const js = await r.json();
       if(!js.ok) alert('Error al proceder: '+(js.error||''));
     } catch(e){ alert('Error: '+e); }
@@ -295,10 +293,10 @@
   });
 
   cancelTaskBtn.addEventListener('click', async ()=> {
-    const task_id = prompt('Introduce task_id para cancelar (si lo conoces):');
-    if(!task_id) return;
+    if(!lastSurveyTaskId){ alert('No hay encuesta en curso'); return; }
     try {
-      await fetch(`/task_cancel/${task_id}`, { method:'POST' });
+      await fetch(`/task_cancel/${encodeURIComponent(lastSurveyTaskId)}`, { method:'POST' });
+      // UI will receive cancelled status via SSE
     } catch(e){ console.warn('Cancel error', e); }
   });
 
@@ -334,6 +332,6 @@
   filteredResults = results.slice();
   updateSummary();
 
-  // Expose small API for dev/debug
+  // Expose small API for debug
   window.__ws = { pushResultToList, results, chart, createGauge, setGaugeValue, showPanel };
 })();

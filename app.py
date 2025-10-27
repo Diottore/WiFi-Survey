@@ -377,7 +377,6 @@ def stream_task(task_id):
                         yield f"event: update\ndata: {{}}\n\n"
                 if t.get("status") in ("finished","error","cancelled"):
                     try:
-                        # prefer result (single-run) else results (survey)
                         payload = t.get("result") if t.get("result") else t.get("results", [])
                         yield f"event: finished\ndata: {json.dumps(payload)}\n\n"
                     except Exception:
