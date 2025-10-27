@@ -7,6 +7,7 @@ import json
 import uuid
 import threading
 import subprocess
+import re
 from datetime import datetime
 from flask import Flask, request, jsonify, send_file, render_template, abort
 from flask_cors import CORS
@@ -16,7 +17,7 @@ RAW_DIR = os.path.join(APP_DIR, "raw_results")
 CSV_FILE = os.path.join(APP_DIR, "wifi_survey_results.csv")
 
 # --- CONFIGURACIÓN: ajusta según tu servidor IP/tiempos ---
-SERVER_IP = "192.168.1.10"   # <-- Cambia por la IP de tu servidor iperf3
+SERVER_IP = "192.168.1.10"
 IPERF_DURATION = 20
 IPERF_PARALLEL = 4
 # --------------------------------------------------------
@@ -26,7 +27,7 @@ os.makedirs(RAW_DIR, exist_ok=True)
 app = Flask(__name__, template_folder="templates", static_folder="static")
 CORS(app)
 
-CSV_HEADER = ["device","point_id","timestamp","lat","lon","ssid","bssid","frequency_mhz","rssi_dbm","link_speed_mbps","iperf_dl_mbps","iperf_ul_mbps","ping_avg_ms","ping_p95_ms","ping_loss_pct","test_duration_s","notes"]
+CSV_HEADER = ["device","point_id","timestamp","lat","lon","ssid","bssid","frequency_mhz","rssi_dbm","link_speed_mbps","iperf_dl_mbps","iperf_ul_mbps","ping_avg_ms","ping_jitter_ms","ping_loss_pct","test_duration_s","notes"]
 if not os.path.exists(CSV_FILE):
     with open(CSV_FILE, "w", newline='') as f:
         writer = csv.writer(f)
@@ -36,6 +37,7 @@ if not os.path.exists(CSV_FILE):
 tasks = {}
 tasks_lock = threading.Lock()
 
+
 def run_cmd(cmd, timeout=300):
     try:
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
@@ -44,6 +46,38 @@ def run_cmd(cmd, timeout=300):
         return "", "timeout", -1
     except Exception as e:
         return "", str(e), -1
+
+
+def parse_ping_stats(ping_output):
+    # Extract individual RTT times in ms
+    times = []
+    for line in ping_output.splitlines():
+        m = re.search(r"time=([0-9]+\.?[0-9]*)", line)
+        if m:
+            try:
+                times.append(float(m.group(1)))
+            except:
+                pass
+    ping_avg = None
+    ping_jitter = None
+    ping_loss = ""
+    if times:
+        ping_avg = sum(times) / len(times)
+        # jitter as mean absolute difference between successive RTTs
+        if len(times) > 1:
+            diffs = [abs(times[i] - times[i-1]) for i in range(1, len(times))]
+            ping_jitter = sum(diffs) / len(diffs)
+        else:
+            ping_jitter = 0.0
+    # packet loss
+    for line in ping_output.splitlines():
+        if 'packet loss' in line:
+            # typical format: '3 packets transmitted, 3 received, 0% packet loss, time 2003ms'
+            parts = line.split(',')
+            if len(parts) >= 3:
+                ping_loss = parts[2].strip()
+    return ping_avg, ping_jitter, ping_loss, times
+
 
 def measure_point(device, point, run_index):
     timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -63,21 +97,16 @@ def measure_point(device, point, run_index):
     lon = loc_json.get("longitude", "")
 
     # Ping
-    ping_out, ping_err, code = run_cmd(f"ping -c 30 {SERVER_IP}", timeout=60)
+    ping_out, ping_err, code = run_cmd(f"ping -c 30 {SERVER_IP}", timeout=90)
     ping_avg = ""
+    ping_jitter = ""
     ping_loss = ""
+    ping_times = []
     if ping_out:
-        for line in ping_out.splitlines():
-            if "rtt min/avg/max/mdev" in line or "round-trip min/avg/max" in line:
-                parts = line.split("=")[1].strip().split("/")
-                if len(parts) >= 2:
-                    ping_avg = parts[1]
-        for line in ping_out.splitlines():
-            if "packet loss" in line:
-                try:
-                    ping_loss = line.split(",")[2].strip()
-                except:
-                    ping_loss = ""
+        ping_avg_v, ping_jitter_v, ping_loss_v, ping_times = parse_ping_stats(ping_out)
+        ping_avg = f"{ping_avg_v:.2f}" if ping_avg_v is not None else ""
+        ping_jitter = f"{ping_jitter_v:.2f}" if ping_jitter_v is not None else ""
+        ping_loss = ping_loss_v or ""
 
     # iperf3 DL (cliente default)
     dl_out, dl_err, code = run_cmd(f"iperf3 -c {SERVER_IP} -t {IPERF_DURATION} -P {IPERF_PARALLEL} --json", timeout=IPERF_DURATION+30)
@@ -97,14 +126,14 @@ def measure_point(device, point, run_index):
 
     raw_file = os.path.join(RAW_DIR, f"{point}_{run_index}_{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.json")
     with open(raw_file, "w") as f:
-        json.dump({"wifi": wifi_json, "location": loc_json, "ping": ping_out, "iperf_dl": dl_json, "iperf_ul": ul_json}, f, indent=2)
+        json.dump({"wifi": wifi_json, "location": loc_json, "ping": {"output": ping_out, "times": ping_times, "avg_ms": ping_avg, "jitter_ms": ping_jitter, "loss": ping_loss}, "iperf_dl": dl_json, "iperf_ul": ul_json}, f, indent=2)
 
-    csv_row = [device, point, timestamp, lat, lon, ssid, bssid, freq, rssi, link_speed, dl_mbps, ul_mbps, ping_avg, "", ping_loss, IPERF_DURATION, f"run:{run_index}"]
+    csv_row = [device, point, timestamp, lat, lon, ssid, bssid, freq, rssi, link_speed, dl_mbps, ul_mbps, ping_avg, ping_jitter, ping_loss, IPERF_DURATION, f"run:{run_index}"]
     with open(CSV_FILE, "a", newline='') as f:
         writer = csv.writer(f)
         writer.writerow(csv_row)
 
-    return {"device": device, "point": point, "timestamp": timestamp, "ssid": ssid, "bssid": bssid, "rssi": rssi, "frequency": freq, "link_speed": link_speed, "iperf_dl_mbps": dl_mbps, "iperf_ul_mbps": ul_mbps, "ping_avg": ping_avg, "ping_loss": ping_loss, "raw_file": raw_file}
+    return {"device": device, "point": point, "timestamp": timestamp, "ssid": ssid, "bssid": bssid, "rssi": rssi, "frequency": freq, "link_speed": link_speed, "iperf_dl_mbps": dl_mbps, "iperf_ul_mbps": ul_mbps, "ping_avg": ping_avg, "ping_jitter": ping_jitter, "ping_loss": ping_loss, "raw_file": raw_file}
 
 # --- Flask endpoints ---
 @app.route("/")
@@ -184,5 +213,4 @@ def raw_file(fname):
     abort(404)
 
 if __name__ == "__main__":
-    # Por seguridad por defecto escucha localhost; cambia a '0.0.0.0' si deseas acceder desde la LAN.
     app.run(host="127.0.0.1", port=5000, debug=False)

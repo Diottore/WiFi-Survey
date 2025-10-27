@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # mobile_wifi_survey.sh - encuesta WiFi con Termux (sin root)
 # Requiere: termux-api, iperf3, jq
-SERVER_IP="192.168.1.10"    # <-- Cambia por la IP de tu servidor iperf3
+SERVER_IP="192.168.1.10"    # <-- Cambia si es necesario
 IPERF_DURATION=30
 IPERF_PARALLEL=4
 REPEATS=3
@@ -11,7 +11,7 @@ RAW_DIR="./raw_results"
 mkdir -p "$RAW_DIR"
 
 if [ ! -f "$OUTPUT_CSV" ]; then
-  echo "device,point_id,timestamp,lat,lon,ssid,bssid,frequency_mhz,rssi_dbm,link_speed_mbps,iperf_dl_mbps,iperf_ul_mbps,ping_avg_ms,ping_p95_ms,ping_loss_pct,test_duration_s,notes" > "$OUTPUT_CSV"
+  echo "device,point_id,timestamp,lat,lon,ssid,bssid,frequency_mhz,rssi_dbm,link_speed_mbps,iperf_dl_mbps,iperf_ul_mbps,ping_avg_ms,ping_jitter_ms,ping_loss_pct,test_duration_s,notes" > "$OUTPUT_CSV"
 fi
 
 read -p "Nombre del dispositivo (p.ej. S24FE): " DEVICE_NAME
@@ -37,9 +37,24 @@ for POINT in "${POINTS[@]}"; do
     LAT=$(echo "$LOC_JSON" | jq -r '.latitude // empty')
     LON=$(echo "$LOC_JSON" | jq -r '.longitude // empty')
 
-    PING_OUT=$(ping -c 50 -q "$SERVER_IP" 2>&1 || echo "")
-    PING_AVG=$(echo "$PING_OUT" | awk -F'/' '/rtt/ {print $5}')
-    PING_LOSS=$(echo "$PING_OUT" | awk -F', ' '/packet loss/ {print $3}' | sed 's/% packet loss//')
+    # Run ping and capture individual RTTs
+    PING_OUT=$(ping -c 50 "$SERVER_IP" 2>&1 || echo "")
+    # Extract RTT values (numbers after time=)
+    RTTS=$(echo "$PING_OUT" | awk -F'time=' '/time=/{print $2}' | awk '{print $1}')
+    PING_AVG=""
+    PING_JITTER=""
+    PING_LOSS=""
+    TIMES_JSON="[]"
+    if [ -n "$RTTS" ]; then
+      # compute avg
+      PING_AVG=$(echo "$RTTS" | awk '{sum+=$1; n++} END{ if(n>0) printf "%.2f", sum/n; else print "0.00" }')
+      # compute mean absolute difference (jitter)
+      PING_JITTER=$(echo "$RTTS" | awk 'BEGIN{prev="";n=0;sum=0} { if(prev==""){ prev=$1 } else { d=$1-prev; if(d<0) d=-d; sum+=d; prev=$1; n++ } } END{ if(n>0) printf "%.2f", sum/n; else print "0.00" }')
+      # packet loss (extract third comma-separated field usually)
+      PING_LOSS=$(echo "$PING_OUT" | awk -F', ' '/packet loss/ {print $3}' | sed 's/% packet loss//')
+      # build JSON array of times (using jq)
+      TIMES_JSON=$(echo "$RTTS" | jq -R -s 'split("\n") | map(select(. != "")) | map(tonumber)' 2>/dev/null || echo "[]")
+    fi
 
     IPERF_DL_JSON=$(iperf3 -c "$SERVER_IP" -t $IPERF_DURATION -P $IPERF_PARALLEL --json 2>/dev/null || echo "{}")
     IPERF_DL_BPS=$(echo "$IPERF_DL_JSON" | jq -r '.end.sum_received.bits_per_second // .end.sum_sent.bits_per_second // 0')
@@ -50,10 +65,16 @@ for POINT in "${POINTS[@]}"; do
     IPERF_UL_Mbps=$(awk "BEGIN{printf \"%.2f\",${IPERF_UL_BPS}/1000000}")
 
     RAW_FILE="$RAW_DIR/${POINT}_${RUN}_$(date -u +"%Y%m%dT%H%M%SZ").json"
-    jq -n --arg w "$WIFI_JSON" --arg dl "$IPERF_DL_JSON" --arg ul "$IPERF_UL_JSON" --arg p "$PING_OUT" \
-      '{wifi: ($w|fromjson?), iperf_dl: ($dl|fromjson?), iperf_ul: ($ul|fromjson?), ping: $p}' > "$RAW_FILE" 2>/dev/null || echo "{}" > "$RAW_FILE"
+    # Create raw JSON with ping times array, avg and jitter
+    jq -n --argjson wifi "$(echo "$WIFI_JSON" | jq -c '.' 2>/dev/null || echo '{}')" \
+          --argjson dl "$(echo "$IPERF_DL_JSON" | jq -c '.' 2>/dev/null || echo '{}')" \
+          --argjson ul "$(echo "$IPERF_UL_JSON" | jq -c '.' 2>/dev/null || echo '{}')" \
+          --arg ping_out "$PING_OUT" \
+          --arg avg "$PING_AVG" --arg jitter "$PING_JITTER" --arg loss "$PING_LOSS" \
+          --argjson times "$TIMES_JSON" \
+          '{wifi: $wifi, iperf_dl: $dl, iperf_ul: $ul, ping: {raw: $ping_out, times: $times, avg_ms: $avg, jitter_ms: $jitter, loss: $loss}}' > "$RAW_FILE" 2>/dev/null || echo "{}" > "$RAW_FILE"
 
-    echo "${DEVICE_NAME},${POINT},${TIMESTAMP},${LAT},${LON},\"${SSID}\",${BSSID},${FREQ},${RSSI},${LINK_SPEED},${IPERF_DL_Mbps},${IPERF_UL_Mbps},${PING_AVG},,${PING_LOSS},${IPERF_DURATION},run:${RUN}" >> "$OUTPUT_CSV"
+    echo "${DEVICE_NAME},${POINT},${TIMESTAMP},${LAT},${LON},\"${SSID}\",${BSSID},${FREQ},${RSSI},${LINK_SPEED},${IPERF_DL_Mbps},${IPERF_UL_Mbps},${PING_AVG},${PING_JITTER},${PING_LOSS},${IPERF_DURATION},run:${RUN}" >> "$OUTPUT_CSV"
 
     echo "Guardado: punto $POINT run $RUN -> $RAW_FILE"
     sleep 1

@@ -1,5 +1,5 @@
-// static/app.js - mejoras responsive y rendimiento (debounced chart resize, batching results)
-// Cargar con defer en el HTML. Mantiene compatibilidad con endpoints existentes.
+// static/app.js - mejoras responsive + mostrar ping y jitter
+// Cargado con defer. Mantiene compatibilidad con endpoints existentes.
 
 (() => {
   const $ = id => document.getElementById(id);
@@ -10,13 +10,14 @@
   const startSurveyBtn = $('startSurvey'), cancelTaskBtn = $('cancelTask');
   const surveyArea = $('surveyArea'), surveyLog = $('surveyLog'), surveyStatus = $('surveyStatus'), progressBar = $('progressBar');
   const resultsList = $('resultsList'), avgRssi = $('avgRssi'), avgDl = $('avgDl'), avgUl = $('avgUl');
+  const avgPing = $('avgPing'), avgJitter = $('avgJitter');
   const exportJsonBtn = $('exportJsonBtn'), clearResultsBtn = $('clearResultsBtn'), statusDot = $('statusDot');
   const surveyDeviceEl = $('survey_device'), fabRun = $('fabRun');
 
-  // Simple results buffer to batch DOM updates
+  // Buffers and state
   let resultBuffer = [];
   let flushing = false;
-  let results = []; // in-memory
+  let results = [];
 
   // Chart
   const ctx = document.getElementById('throughputChart').getContext('2d');
@@ -29,14 +30,12 @@
   // Debounce helper
   function debounce(fn, ms=150){ let t; return (...a)=>{ clearTimeout(t); t = setTimeout(()=>fn(...a), ms); } }
 
-  // Use ResizeObserver to resize chart safely when parent changes (orientation/keyboard)
-  const ro = new ResizeObserver(debounce(() => { try{ chart.resize(); }catch(e){/*ignore*/} }, 120));
+  // Resize observer for chart
+  const ro = new ResizeObserver(debounce(() => { try{ chart.resize(); }catch(e){} }, 120));
   ro.observe(document.querySelector('.chart-card') || document.body);
 
-  // normalize text and avoid layout breaking long strings
   function norm(s){ if(s===null||s===undefined) return ''; return String(s).trim().replace(/\s+/g,' '); }
 
-  // add to buffer and schedule flush
   function pushResult(r){
     if(!r) return;
     resultBuffer.push(r);
@@ -48,46 +47,49 @@
 
   function flushResults(){
     if(resultBuffer.length===0){ flushing=false; return; }
-    // batch DOM operations
     const frag = document.createDocumentFragment();
     while(resultBuffer.length){
       const r = resultBuffer.shift();
+      // normalize fields
+      r.point = norm(r.point);
+      r.ssid = norm(r.ssid);
+      r.bssid = norm(r.bssid);
+      r.rssi = norm(r.rssi);
+      r.ping_avg = r.ping_avg ?? r.ping_avg_ms ?? r.ping_avg;
+      r.ping_jitter = r.ping_jitter ?? r.ping_jitter_ms ?? r.ping_jitter;
+
       results.unshift(r);
       if(results.length>300) results.pop();
 
       const card = document.createElement('div');
       card.className = 'result-card';
-      const sSsid = norm(r.ssid), sBssid = norm(r.bssid);
       card.innerHTML = `
         <div class="result-left" role="listitem" style="min-width:0">
           <div style="max-width:60vw;overflow-wrap:break-word">
-            <div class="title">${norm(r.point)}</div>
-            <div class="muted">${sSsid}${sBssid?(' · '+sBssid):''}</div>
+            <div class="title">${r.point}</div>
+            <div class="muted">${r.ssid}${r.bssid?(' · '+r.bssid):''}</div>
           </div>
         </div>
         <div class="result-stats">
-          <div class="badge">RSSI ${norm(r.rssi)||'—'} dBm</div>
+          <div class="badge">RSSI ${r.rssi || '—'} dBm</div>
           <div style="margin-top:6px"><strong>${r.iperf_dl_mbps ?? '—'}</strong> Mbps</div>
-          <div class="muted" style="font-size:.85rem">${r.iperf_ul_mbps ?? '—'} Mbps</div>
+          <div class="muted" style="font-size:.85rem">UL ${r.iperf_ul_mbps ?? '—'} Mbps</div>
+          <div style="margin-top:6px"><span class="muted">Ping: </span><strong>${r.ping_avg ?? '—'}</strong> ms</div>
+          <div style="margin-top:2px"><span class="muted">Jitter: </span><strong>${r.ping_jitter ?? '—'}</strong> ms</div>
           <div style="margin-top:6px"><a href="/raw/${(r.raw_file||'').split('/').pop()}" target="_blank" class="muted">raw</a></div>
         </div>
       `;
       frag.appendChild(card);
 
-      // update chart data in memory
-      chart.data.labels.unshift(norm(r.point));
+      // chart update
+      chart.data.labels.unshift(r.point);
       chart.data.datasets[0].data.unshift(Number(r.iperf_dl_mbps) || 0);
       if(chart.data.labels.length>20){ chart.data.labels.pop(); chart.data.datasets[0].data.pop(); }
     }
 
-    // prepend fragment
     resultsList.prepend(frag);
-    // update chart (batched)
     chart.update('active');
-
-    // update summary
     updateSummary();
-
     flushing = false;
   }
 
@@ -95,10 +97,16 @@
     const rssiVals = results.map(x=>Number(x.rssi)).filter(n=>!isNaN(n));
     const dlVals = results.map(x=>Number(x.iperf_dl_mbps)).filter(n=>!isNaN(n));
     const ulVals = results.map(x=>Number(x.iperf_ul_mbps)).filter(n=>!isNaN(n));
-    const avg = arr => arr.length? (arr.reduce((a,b)=>a+b,0)/arr.length) : 0;
+    const pingVals = results.map(x=>Number(x.ping_avg)).filter(n=>!isNaN(n));
+    const jitterVals = results.map(x=>Number(x.ping_jitter)).filter(n=>!isNaN(n));
+
+    const avg = arr => arr.length ? (arr.reduce((a,b)=>a+b,0)/arr.length) : NaN;
+
     avgRssi.textContent = rssiVals.length ? Math.round(avg(rssiVals)) + ' dBm' : '—';
     avgDl.textContent = dlVals.length ? avg(dlVals).toFixed(2) + ' Mbps' : '—';
     avgUl.textContent = ulVals.length ? avg(ulVals).toFixed(2) + ' Mbps' : '—';
+    avgPing && (avgPing.textContent = pingVals.length ? avg(pingVals).toFixed(2) + ' ms' : '—');
+    avgJitter && (avgJitter.textContent = jitterVals.length ? avg(jitterVals).toFixed(2) + ' ms' : '—');
   }
 
   // Run point (single)
@@ -141,7 +149,7 @@
     } catch(e){ surveyLog.textContent = 'Error al iniciar: '+e; startSurveyBtn.disabled=false; }
   });
 
-  // Polling task status
+  // Polling
   let pollHandle = null;
   function pollTask(taskId){
     surveyArea.hidden = false;
