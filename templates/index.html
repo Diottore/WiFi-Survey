@@ -9,13 +9,13 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
-  <script src="/static/app.js?v=11" defer></script>
+  <script src="/static/app.js?v=12" defer></script>
 
   <style>
     :root {
       --bg:#f6f7fb; --card:#fff; --muted:#6b7280; --primary:#0b74ff; --gap:12px;
-      --chart-h: clamp(220px, 34vh, 360px);          /* desktop/tablet */
-      --chart-h-mobile: clamp(220px, 42dvh, 420px);  /* móvil: usa dvh */
+      --chart-h: clamp(220px, 34vh, 360px);
+      --chart-h-mobile: clamp(220px, 44dvh, 420px);
     }
     * { box-sizing:border-box }
     body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial; margin:0; background:var(--bg); color:#0f172a; }
@@ -46,7 +46,7 @@
     .muted { color:#6b7280; font-size:.92rem; }
     .controls-row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
 
-    /* Live panel (sin tacómetro) */
+    /* Live (sin tacómetro) */
     #liveVisuals { display:none; gap:16px; align-items:flex-start; margin-top:8px; flex-wrap:wrap; }
     #liveVisuals.show { display:flex; }
     .chart-card { flex:1; min-width:260px; min-height:160px; padding:10px; border-radius:10px; box-shadow:none; overflow:hidden; }
@@ -57,14 +57,15 @@
     #liveMiniChartWrap { height: 200px; position: relative; }
     #liveMiniChart { width:100% !important; height:100% !important; display:block; }
 
-    /* Results: layout robusto y mobile-first */
-    .results-grid { display:grid; gap:12px; grid-template-areas: "chart" "content"; }
-    .results-chart.card { grid-area: chart; position: relative; overflow: hidden; padding-top: 8px; }
+    /* Results */
+    .results-grid { display:grid; gap:12px; grid-template-areas: "chart" "content"; grid-template-rows: auto auto; }
+    .results-chart.card { grid-area: chart; position: relative; overflow: hidden; padding-top: 0; }
     .results-toolbar {
       position: sticky; top: max(0px, env(safe-area-inset-top));
       z-index: 2; background: #fff;
-      padding: 8px 0 10px; border-bottom: 1px solid #f1f5f9;
-      margin-bottom: 8px; /* sin márgenes negativos */
+      padding: 10px 0 10px;
+      border-bottom: 1px solid #f1f5f9;
+      margin: 0 0 8px 0; /* sin márgenes negativos */
     }
     .toolbar-flex { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
     .toolbar-right {

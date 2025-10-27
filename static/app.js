@@ -1,5 +1,7 @@
-// static/app.js v11 — Resultados mobile-first: toolbar sticky sin solapamiento, gráfico responsivo,
-// controles con scroll-x en móvil y leyenda compacta. Live panel con gráfica de estabilidad.
+// static/app.js v12 — Fix mobile cuando llegan resultados:
+// - Redimensiona el gráfico tras poblar datos (doble RAF + debounce resize/orientation)
+// - Ajustes responsivos en leyenda y ticks
+// - Llama a refreshResultsLayout() al añadir resultados
 
 (() => {
   const $ = id => document.getElementById(id);
@@ -9,6 +11,14 @@
   const modeQuickBtn = $('modeQuick'), modeSurveyBtn = $('modeSurvey'), modeResultsBtn = $('modeResults');
   const goToSurveyBtn = $('btn-go-to-survey'), goToResultsBtn = $('modeResults') || $('btn-go-to-results'), goToTestsBtn = $('btn-go-to-tests');
 
+  function refreshResultsLayout() {
+    // Recalcular tamaño del gráfico tras cambios de DOM/datos
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        try { resultsChart && resultsChart.resize(); } catch(e){}
+      });
+    });
+  }
   function setMode(mode, persist = true) {
     const map = { quick: panelQuick, survey: panelSurvey, results: panelResults };
     Object.entries(map).forEach(([k,v]) => v && v.classList.toggle('hidden', k !== mode));
@@ -16,11 +26,10 @@
     if (mode === 'quick' && modeQuickBtn) modeQuickBtn.classList.add('active');
     if (mode === 'survey' && modeSurveyBtn) modeSurveyBtn.classList.add('active');
     if (mode === 'results' && modeResultsBtn) modeResultsBtn.classList.add('active');
-    if (persist) try { localStorage.setItem('uiMode', mode); } catch(e){}
+    if (persist) { try { localStorage.setItem('uiMode', mode); } catch(e){} }
     if (mode === 'results') {
       ensureResultsChart();
-      // doble RAF para asegurar size correcto tras mostrar
-      requestAnimationFrame(()=>requestAnimationFrame(()=>{ try { resultsChart && resultsChart.resize(); } catch{} }));
+      refreshResultsLayout();
     }
   }
   modeQuickBtn && modeQuickBtn.addEventListener('click', ()=> setMode('quick'));
@@ -96,7 +105,7 @@
     ensureLiveMiniChart();
     if(!liveMiniChart) return;
     liveSamples.push({t, dl, ul, ping});
-    if(liveSamples.length > 600) liveSamples.shift(); // ~10 min @1Hz
+    if(liveSamples.length > 600) liveSamples.shift();
     liveMiniChart.data.labels = liveSamples.map(s=>s.t);
     liveMiniChart.data.datasets[0].data = liveSamples.map(s=>s.dl ?? null);
     liveMiniChart.data.datasets[1].data = liveSamples.map(s=>s.ul ?? null);
@@ -133,7 +142,7 @@
 
   function ensureResultsChart(){
     const canvas = $('throughputChart'); if(!canvas) return;
-    if(resultsChart) { try { applyResultsChartResponsiveOptions(resultsChart); resultsChart.resize(); } catch{} return; }
+    if(resultsChart) { try { applyResultsChartResponsiveOptions(resultsChart); resultsChart.resize(); } catch(e){} return; }
     const ctx = canvas.getContext('2d');
     resultsChart = new Chart(ctx, {
       type: 'line',
@@ -143,7 +152,7 @@
         { label:'Ping ms', data: [], borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,0.04)', yAxisID:'y1', tension:0.2, pointRadius:2, borderDash:[4,2], fill:false }
       ]},
       options: {
-        responsive:true, maintainAspectRatio:false, interaction:{mode:'index', intersect:false}, animation:{duration:250},
+        responsive:true, maintainAspectRatio:false, interaction:{mode:'index', intersect:false}, animation:{duration:200},
         plugins:{ legend:{ position:'top', labels:{ boxWidth: 12 } } },
         scales:{ x:{ title:{display:true,text:'Punto'}, ticks:{ autoSkip:true, maxRotation:0 } },
           y:{ position:'left', title:{display:true,text:'Mbps'}, beginAtZero:true },
@@ -152,18 +161,17 @@
     });
     applyResultsChartResponsiveOptions(resultsChart);
 
-    // ResizeObserver para que no quede en 0x0
     const card = $('resultsChartCard');
     if(card && 'ResizeObserver' in window){
-      chartRO = new ResizeObserver(()=> { try { applyResultsChartResponsiveOptions(resultsChart); resultsChart.resize(); } catch{} });
+      chartRO = new ResizeObserver(()=> { try { applyResultsChartResponsiveOptions(resultsChart); resultsChart.resize(); } catch(e){} });
       chartRO.observe(card);
     }
-    // Escucha cambios de media query para reconfigurar leyenda/ticks
     matchMedia('(max-width:680px)').addEventListener?.('change', ()=> {
-      try { applyResultsChartResponsiveOptions(resultsChart); resultsChart.update(); } catch{}
+      try { applyResultsChartResponsiveOptions(resultsChart); resultsChart.update(); } catch(e){}
     });
 
     rebuildResultsChart();
+    refreshResultsLayout();
   }
 
   function getFilteredSortedResults(){
@@ -189,6 +197,7 @@
     if(toggleUL) resultsChart.data.datasets[1].hidden = !toggleUL.checked;
     if(togglePing) resultsChart.data.datasets[2].hidden = !togglePing.checked;
     resultsChart.update('active');
+    refreshResultsLayout();
   }
 
   function addLatestPointToChart(r){
@@ -202,6 +211,7 @@
     if(toggleUL) resultsChart.data.datasets[1].hidden = !toggleUL.checked;
     if(togglePing) resultsChart.data.datasets[2].hidden = !togglePing.checked;
     resultsChart.update('active');
+    refreshResultsLayout();
   }
 
   // Controles resultados
@@ -228,7 +238,16 @@
   function pollTaskStatus(task_id, ms=1200){
     if(pollIntervalHandle) clearInterval(pollIntervalHandle);
     pollIntervalHandle=setInterval(async()=>{
-      try{ const r=await fetch(`/task_status/${task_id}`); if(!r.ok) return; const js=await r.json(); if(js.partial) handlePartialUpdate(js); if(js.status==='finished'){ handleFinalResult(js.result||js.results||{}); clearInterval(pollIntervalHandle); pollIntervalHandle=null; } }catch(e){ console.warn('poll error',e); }
+      try{
+        const r=await fetch(`/task_status/${task_id}`);
+        if(!r.ok) return;
+        const js=await r.json();
+        if(js.partial) handlePartialUpdate(js);
+        if(js.status==='finished'){
+          handleFinalResult(js.result||js.results||{});
+          clearInterval(pollIntervalHandle); pollIntervalHandle=null;
+        }
+      }catch(e){ console.warn('poll error',e); }
     }, ms);
   }
 
@@ -253,8 +272,8 @@
     const progress=Number(partial.progress_pct || partial.progress || 0);
     const elapsed=Number(partial.elapsed_s || 0);
 
-    // Mostrar panel y actualizar gráfica en vivo
-    showLiveVisuals();
+    // Mostrar panel y actualizar mini gráfica
+    if(liveVisuals && !liveVisuals.classList.contains('show')) showLiveVisuals();
     liveChartPush(elapsed, dl, ul, pingAvg);
 
     // Lecturas instantáneas
@@ -280,19 +299,17 @@
       liveSummary && (liveSummary.textContent = `Encuesta finalizada: ${res.length} puntos`);
     } else {
       const mapped = mapFinalToResult(res);
-      // Fallback: si el backend no trajo samples, usa los del frontend
       if(!mapped.samples || !mapped.samples.length){
         mapped.samples = liveSamples.map(s=>({ t:s.t, dl:s.dl, ul:s.ul, ping:s.ping }));
       }
-
-      // Actualiza lecturas finales
       const dl=Number(mapped.iperf_dl_mbps||0);
       instDlEl && (instDlEl.textContent = `${dl.toFixed(2)} Mbps`);
       instUlEl && (instUlEl.textContent = `${Number(mapped.iperf_ul_mbps||0).toFixed(2)} Mbps`);
       instPingEl && (instPingEl.textContent = mapped.ping_avg!=null ? `${Number(mapped.ping_avg).toFixed(2)} ms` : '—');
 
       pushResultToList(mapped);
-      ensureResultsChart(); addLatestPointToChart(mapped);
+      ensureResultsChart();
+      addLatestPointToChart(mapped);
       updateSummary();
     }
 
@@ -328,12 +345,14 @@
         <div class="muted">${(r.ssid ?? '')}</div>
       </div>
       <div style="width:120px;text-align:right">${r.iperf_dl_mbps!=null? Number(r.iperf_dl_mbps).toFixed(2):'—'} Mbps</div>
-      <div style="width:120px;text-align:right">${r.iperf_ul_mbps!=null? Number(r.iperf_ul_mbps).toFixed(2):'—'} Mbps</div>
+      <div style="width:120px;text-align:right">${r.iperf_ul_mbps!=null? Number(r.iperf_ul_mbps).toFixed(2):'—'}</div>
       <div style="width:80px;text-align:right">${r.ping_avg!=null? r.ping_avg.toFixed(2):'—'}</div>
       <div style="width:60px;text-align:center"><a class="muted" href="/raw/${(r.raw_file||'').split('/').pop()}" target="_blank">raw</a></div>
     `;
     if(resultsList) resultsList.prepend(card);
     if(emptyState) emptyState.style.display = results.length ? 'none' : 'block';
+    // Tras insertar en DOM, refrescar layout por si cambia el alto disponible
+    refreshResultsLayout();
   }
 
   // Run quick
@@ -345,7 +364,9 @@
       const j=await res.json();
       if(!j || !j.ok){ liveSummary && (liveSummary.textContent = `Error: ${j?.error||'unknown'}`); runBtn.disabled=false; return; }
       lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
-      liveChartReset(); showLiveVisuals(); liveSummary && (liveSummary.textContent='Tarea iniciada, esperando actualizaciones...'); openSseForTask(j.task_id); setMode('results');
+      liveChartReset(); if(liveVisuals && !liveVisuals.classList.contains('show')) showLiveVisuals();
+      liveSummary && (liveSummary.textContent='Tarea iniciada, esperando actualizaciones...');
+      openSseForTask(j.task_id); setMode('results');
     }catch(e){ liveSummary && (liveSummary.textContent = `Error: ${e.message}`); } finally{ runBtn.disabled=false; }
   });
 
@@ -362,7 +383,8 @@
       if(!j.ok){ surveyLog && (surveyLog.textContent='Error: ' + (j.error||'')); startSurveyBtn.disabled=false; return; }
       lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
       cancelTaskBtn && (cancelTaskBtn.disabled=false);
-      liveChartReset(); showLiveVisuals(); openSseForTask(j.task_id); surveyArea && (surveyArea.hidden=false); setMode('results');
+      liveChartReset(); if(liveVisuals && !liveVisuals.classList.contains('show')) showLiveVisuals();
+      openSseForTask(j.task_id); surveyArea && (surveyArea.hidden=false); setMode('results');
     }catch(e){ surveyLog && (surveyLog.textContent='Error al iniciar: '+e); } finally{ startSurveyBtn.disabled=false; }
   });
 
@@ -436,9 +458,15 @@
     avgPing && (avgPing.textContent = pingVals.length ? avg(pingVals).toFixed(2)+' ms' : '—');
   }
 
+  // Ajustes de layout en cambios de tamaño/orientación/visibilidad
+  const debouncedRefresh = debounce(refreshResultsLayout, 150);
+  window.addEventListener('resize', debouncedRefresh);
+  window.addEventListener('orientationchange', debouncedRefresh);
+  document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'visible') debouncedRefresh(); });
+
   // Init mínimos
   updateSummary();
 
   // Expose (debug)
-  window.__ws = Object.assign(window.__ws || {}, { ensureResultsChart, rebuildResultsChart });
+  window.__ws = Object.assign(window.__ws || {}, { ensureResultsChart, rebuildResultsChart, refreshResultsLayout });
 })();
