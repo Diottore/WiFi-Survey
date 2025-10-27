@@ -785,7 +785,6 @@
     exportJsonBtn.textContent = '🔄 Exportando...';
     
     try{
-      await new Promise(resolve => setTimeout(resolve, 100)); // Small delay for UI feedback
       download('wifi_recent.json', JSON.stringify(results.slice(0,1000), null, 2), 'application/json');
     }catch(e){
       alert('Error al exportar JSON: ' + e.message);
