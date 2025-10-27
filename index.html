@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WiFi Survey</title>
+    <link rel="stylesheet" href="styles/style.css">
+    <link rel="stylesheet" href="styles/responsive.css">
+</head>
+<body>
+    <div class="container">
+        <h1 class="header">WiFi Survey</h1>
+        <div class="chart-container">
+            <canvas id="chart"></canvas>
+        </div>
+        <div class="chart-options">
+            <label for="chartType">Tipo de gráfico:</label>
+            <select id="chartType">
+                <option value="bar">Barras</option>
+                <option value="line">Líneas</option>
+                <option value="pie">Pastel</option>
+            </select>
+            <label for="chartColor">Color:</label>
+            <input type="color" id="chartColor" value="#ff0000">
+        </div>
+        <div id="history" class="history-container">
+            <h2>Historial de Encuestas</h2>
+        </div>
+    </div>
+    <script src="scripts/charts.js"></script>
+    <script src="scripts/database.js"></script>
+    <script src="scripts/main.js"></script>
+</body>
+</html>
