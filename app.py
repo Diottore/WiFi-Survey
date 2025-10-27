@@ -1,16 +1,7 @@
 #!/usr/bin/env python3
-# app.py - Flask web UI mejorada para encuesta WiFi en Termux
-# Añadido: ejecución de pruebas en background y SSE para updates parciales
-# Mejora: métricas de ping adicionales (p50, p95, pérdida %) en parciales y resultado final.
+# app.py — añade timeseries de muestras por prueba (t, dl, ul, ping) para live y export.
 
-import os
-import csv
-import json
-import uuid
-import threading
-import subprocess
-import re
-import time
+import os, csv, json, uuid, threading, subprocess, re, time
 from datetime import datetime
 from flask import Flask, request, jsonify, send_file, render_template, abort, Response
 from flask_cors import CORS
@@ -19,11 +10,9 @@ APP_DIR = os.path.abspath(os.path.dirname(__file__))
 RAW_DIR = os.path.join(APP_DIR, "raw_results")
 CSV_FILE = os.path.join(APP_DIR, "wifi_survey_results.csv")
 
-# --- CONFIGURACIÓN ---
 SERVER_IP = "192.168.1.10"
 IPERF_DURATION = 20
 IPERF_PARALLEL = 4
-# ---------------------
 
 os.makedirs(RAW_DIR, exist_ok=True)
 
@@ -33,8 +22,7 @@ CORS(app)
 CSV_HEADER = ["device","point_id","timestamp","ssid","bssid","frequency_mhz","rssi_dbm","link_speed_mbps","iperf_dl_mbps","iperf_ul_mbps","ping_avg_ms","ping_jitter_ms","ping_loss_pct","test_duration_s","notes"]
 if not os.path.exists(CSV_FILE):
     with open(CSV_FILE, "w", newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(CSV_HEADER)
+        csv.writer(f).writerow(CSV_HEADER)
 
 tasks = {}
 tasks_lock = threading.Lock()
@@ -48,27 +36,20 @@ def run_cmd(cmd, timeout=300):
     except Exception as e:
         return "", str(e), -1
 
-def parse_ping_times_from_output_line(line):
+def parse_ping_time(line):
     m = re.search(r'time=([\d\.]+)', line)
     if m:
-        try:
-            return float(m.group(1))
-        except:
-            return None
+        try: return float(m.group(1))
+        except: return None
     return None
 
 def _percentile(values, p):
-    if not values:
-        return None
+    if not values: return None
     arr = sorted(values)
     k = (len(arr)-1) * (p/100.0)
-    f = int(k)
-    c = min(f+1, len(arr)-1)
-    if f == c:
-        return arr[int(k)]
-    d0 = arr[f] * (c-k)
-    d1 = arr[c] * (k-f)
-    return d0 + d1
+    f = int(k); c = min(f+1, len(arr)-1)
+    if f == c: return arr[int(k)]
+    return arr[f] * (c-k) + arr[c] * (k-f)
 
 def worker_run_point(task_id, device, point, run_index, duration, parallel):
     with tasks_lock:
@@ -81,19 +62,24 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
             "progress_pct": 0, "elapsed_s": 0
         }
         tasks[task_id]["seq"] = tasks[task_id].get("seq", 0) + 1
-        tasks[task_id].setdefault("logs", []).append(f"Task {task_id} started: {point} run:{run_index}")
+        tasks[task_id]["logs"] = tasks[task_id].get("logs", []) + [f"Task {task_id} started: {point} run:{run_index}"]
+        tasks[task_id]["samples"] = []  # timeseries t, dl, ul, ping
+        tasks[task_id]["_last_sample_ts"] = 0.0
 
     start_ts = time.time()
 
-    wifi_out, wifi_err, code = run_cmd("termux-wifi-connectioninfo")
+    # Intentar metadata WiFi (no bloqueante)
+    wifi_json = {}
     try:
+        wifi_out, _, _ = run_cmd("termux-wifi-connectioninfo", timeout=4)
         wifi_json = json.loads(wifi_out) if wifi_out else {}
-    except:
+    except Exception:
         wifi_json = {}
 
-    expected_pings = max(1, int(duration))  # para pérdida %
+    expected_pings = max(1, int(duration))
 
-    def update_partial(dl=None, ul=None, ping_vals=None, progress=None, note=None):
+    def update_partial(dl=None, ul=None, ping_vals=None, progress=None, note=None, force_sample=False):
+        now = time.time()
         with tasks_lock:
             partial = tasks[task_id].setdefault("partial", {})
             if dl is not None:
@@ -121,21 +107,36 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
                 partial["ping_loss_pct"] = loss
             if progress is not None:
                 partial["progress_pct"] = int(progress)
-            partial["elapsed_s"] = int(time.time() - start_ts)
-            tasks[task_id]["seq"] = tasks[task_id].get("seq", 0) + 1
+            partial["elapsed_s"] = int(now - start_ts)
             if note:
                 tasks[task_id]["logs"].append(note)
+
+            # Append sample (máx ~10 Hz): cada 0.1s o si force_sample
+            last_s = tasks[task_id].get("_last_sample_ts") or 0.0
+            if force_sample or (now - last_s >= 0.1):
+                t_s = round(now - start_ts, 2)
+                sample = {
+                    "t": t_s,
+                    "dl": partial.get("dl_mbps"),
+                    "ul": partial.get("ul_mbps"),
+                    "ping": partial.get("ping_avg_ms")
+                }
+                tasks[task_id]["samples"].append(sample)
+                tasks[task_id]["_last_sample_ts"] = now
+
+            tasks[task_id]["seq"] = tasks[task_id].get("seq", 0) + 1
 
     ping_samples = []
     def ping_worker():
         try:
-            p = subprocess.Popen(["ping", "-c", str(int(duration)), SERVER_IP], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            p = subprocess.Popen(["ping", "-c", str(int(duration)), SERVER_IP],
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             for line in p.stdout:
                 line = line.strip()
-                t = parse_ping_times_from_output_line(line)
+                t = parse_ping_time(line)
                 if t is not None:
                     ping_samples.append(t)
-                    update_partial(ping_vals=ping_samples)
+                    update_partial(ping_vals=ping_samples, force_sample=True)
             p.wait()
         except Exception as e:
             with tasks_lock:
@@ -144,6 +145,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
     ping_thread = threading.Thread(target=ping_worker, daemon=True)
     ping_thread.start()
 
+    # iperf3 DL
     dl_mbps_final = 0.0
     try:
         cmd_dl = f"iperf3 -c {SERVER_IP} -t {int(duration)} -P {int(parallel)}"
@@ -161,7 +163,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
                 with tasks_lock:
                     tasks[task_id]["logs"].append(line if len(line) < 1000 else line[:1000])
         p.wait()
-        dl_out, dl_err, code = run_cmd(f"iperf3 -c {SERVER_IP} -t 1 -P {int(parallel)} --json", timeout=10)
+        dl_out, _, _ = run_cmd(f"iperf3 -c {SERVER_IP} -t 1 -P {int(parallel)} --json", timeout=10)
         try:
             j = json.loads(dl_out) if dl_out else {}
             dl_bps = (j.get("end", {}).get("sum_received", {}).get("bits_per_second")
@@ -169,11 +171,12 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
             dl_mbps_final = round(dl_bps / 1_000_000, 2) if dl_bps else tasks[task_id]["partial"].get("dl_mbps", 0.0)
         except:
             dl_mbps_final = tasks[task_id]["partial"].get("dl_mbps", 0.0)
-        update_partial(dl=dl_mbps_final)
+        update_partial(dl=dl_mbps_final, force_sample=True)
     except Exception as e:
         with tasks_lock:
             tasks[task_id]["logs"].append(f"iperf3 DL error: {e}")
 
+    # iperf3 UL (reverse)
     ul_mbps_final = 0.0
     try:
         cmd_ul = f"iperf3 -c {SERVER_IP} -t {int(duration)} -P {int(parallel)} -R"
@@ -191,7 +194,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
                 with tasks_lock:
                     tasks[task_id]["logs"].append(line if len(line) < 1000 else line[:1000])
         p.wait()
-        ul_out, ul_err, code = run_cmd(f"iperf3 -c {SERVER_IP} -t 1 -P {int(parallel)} -R --json", timeout=10)
+        ul_out, _, _ = run_cmd(f"iperf3 -c {SERVER_IP} -t 1 -P {int(parallel)} -R --json", timeout=10)
         try:
             j = json.loads(ul_out) if ul_out else {}
             ul_bps = (j.get("end", {}).get("sum_received", {}).get("bits_per_second")
@@ -199,7 +202,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
             ul_mbps_final = round(ul_bps / 1_000_000, 2) if ul_bps else tasks[task_id]["partial"].get("ul_mbps", 0.0)
         except:
             ul_mbps_final = tasks[task_id]["partial"].get("ul_mbps", 0.0)
-        update_partial(ul=ul_mbps_final)
+        update_partial(ul=ul_mbps_final, force_sample=True)
     except Exception as e:
         with tasks_lock:
             tasks[task_id]["logs"].append(f"iperf3 UL error: {e}")
@@ -209,14 +212,10 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
     except:
         pass
 
-    # Calcular métricas finales de ping (en caso de que no hayan quedado actualizadas)
     with tasks_lock:
         partial_ping = tasks[task_id].get("partial", {})
-        ping_avg_ms = partial_ping.get("ping_avg_ms")
-        ping_jitter_ms = partial_ping.get("ping_jitter_ms")
-        ping_p50_ms = partial_ping.get("ping_p50_ms")
-        ping_p95_ms = partial_ping.get("ping_p95_ms")
-        ping_loss_pct = partial_ping.get("ping_loss_pct")
+        samples = tasks[task_id].get("samples", [])
+        # clamp size of samples if needed (optional)
 
     timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     final = {
@@ -230,12 +229,13 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
         "link_speed": wifi_json.get("linkSpeed",""),
         "iperf_dl_mbps": dl_mbps_final,
         "iperf_ul_mbps": ul_mbps_final,
-        "ping_avg_ms": ping_avg_ms,
-        "ping_jitter_ms": ping_jitter_ms,
-        "ping_p50_ms": ping_p50_ms,
-        "ping_p95_ms": ping_p95_ms,
-        "ping_loss_pct": ping_loss_pct,
-        "duration_s": duration
+        "ping_avg_ms": partial_ping.get("ping_avg_ms"),
+        "ping_jitter_ms": partial_ping.get("ping_jitter_ms"),
+        "ping_p50_ms": partial_ping.get("ping_p50_ms"),
+        "ping_p95_ms": partial_ping.get("ping_p95_ms"),
+        "ping_loss_pct": partial_ping.get("ping_loss_pct"),
+        "duration_s": duration,
+        "samples": samples  # << incluir timeseries
     }
 
     raw_file = os.path.join(RAW_DIR, f"{point}_{run_index}_{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.json")
@@ -274,7 +274,6 @@ def run_point():
     run_index = int(payload.get("run", 1))
     duration = int(payload.get("duration", IPERF_DURATION))
     parallel = int(payload.get("parallel", IPERF_PARALLEL))
-
     task_id = str(uuid.uuid4())
     with tasks_lock:
         tasks[task_id] = {"status":"queued", "total":1, "done":0, "logs":[], "results": [], "partial": {}, "seq": 0}
@@ -389,7 +388,7 @@ def stream_task(task_id):
                 seq = t.get("seq", 0)
                 if seq != last_seq:
                     last_seq = seq
-                    data = {"status": t.get("status"), "partial": t.get("partial"), "logs": t.get("logs")[-20:], "done": t.get("done"), "total": t.get("total"), "results": t.get("results", [])}
+                    data = {"status": t.get("status"), "partial": t.get("partial"), "logs": t.get("logs")[-20:], "done": t.get("done"), "total": t.get("total")}
                     yield f"event: update\ndata: {json.dumps(data)}\n\n"
                 if t.get("status") in ("finished","error","cancelled"):
                     payload = t.get("result") if t.get("result") else t.get("results", [])
