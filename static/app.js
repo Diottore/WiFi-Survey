@@ -55,7 +55,7 @@
   const startSurveyBtn = $('startSurvey'), cancelTaskBtn = $('cancelTask');
   const surveyStatusMsgEl = $('surveyStatusMsg');
   const surveyArea = $('surveyArea'), surveyLog = $('surveyLog'), resultsList = $('resultsList'), emptyState=$('emptyState');
-  const avgRssi = $('avgRssi'), avgDl = $('avgDl'), avgUl = $('avgUl'), avgPing = $('avgPing'), totalTests = $('totalTests');
+  const avgRssi = $('avgRssi'), avgDl = $('avgDl'), avgUl = $('avgUl'), avgPing = $('avgPing'), avgJitter = $('avgJitter'), totalTests = $('totalTests');
 
   // ===== Error Handling & Validation =====
   function clearFieldError(field) {
@@ -121,7 +121,7 @@
   // Live UI
   const liveVisuals = $('liveVisuals');
   const runProgressFill = $('runProgressFill'), progressPct = $('progressPct'), timeRemainingEl = $('timeRemaining'), liveSummary = $('liveSummary');
-  const instDlEl = $('instDl'), instUlEl = $('instUl'), instPingEl = $('instPing'), instPing50El = $('instPing50'), instPing95El = $('instPing95'), instLossEl = $('instLoss');
+  const instDlEl = $('instDl'), instUlEl = $('instUl'), instPingEl = $('instPing'), instJitterEl = $('instJitter'), instPing50El = $('instPing50'), instPing95El = $('instPing95'), instLossEl = $('instLoss');
   const showLiveQuick = $('showLiveQuick'), showLiveSurvey = $('showLiveSurvey'), hideLivePanelBtn = $('hideLivePanel');
   
   // Hide/Show live panel handlers
@@ -425,6 +425,7 @@
     const dl=num(partial.dl_mbps) ?? 0;
     const ul=num(partial.ul_mbps) ?? 0;
     const pingAvg=num(partial.ping_avg_ms);
+    const jitter=num(partial.ping_jitter_ms);
     const p50=num(partial.ping_p50_ms), p95=num(partial.ping_p95_ms), loss=num(partial.ping_loss_pct);
     const progress=Number(partial.progress_pct || partial.progress || 0);
     const elapsed=Number(partial.elapsed_s || 0);
@@ -437,6 +438,7 @@
     instDlEl && (instDlEl.textContent = `${dl.toFixed(2)} Mbps`);
     instUlEl && (instUlEl.textContent = `${ul.toFixed(2)} Mbps`);
     instPingEl && (instPingEl.textContent = pingAvg!=null ? `${pingAvg.toFixed(2)} ms` : '—');
+    instJitterEl && (instJitterEl.textContent = jitter!=null ? `${jitter.toFixed(2)} ms` : '—');
     instPing50El && (instPing50El.textContent = p50!=null ? `${p50.toFixed(2)} ms` : '—');
     instPing95El && (instPing95El.textContent = p95!=null ? `${p95.toFixed(2)} ms` : '—');
     instLossEl && (instLossEl.textContent = loss!=null ? `${loss.toFixed(2)} %` : '—');
@@ -510,7 +512,8 @@
       </div>
       <div style="width:120px;text-align:right">${r.iperf_dl_mbps!=null? Number(r.iperf_dl_mbps).toFixed(2):'—'} Mbps</div>
       <div style="width:120px;text-align:right">${r.iperf_ul_mbps!=null? Number(r.iperf_ul_mbps).toFixed(2):'—'}</div>
-      <div style="width:80px;text-align:right">${r.ping_avg!=null? r.ping_avg.toFixed(2):'—'}</div>
+      <div style="width:80px;text-align:right">${r.ping_avg!=null? r.ping_avg.toFixed(2):'—'} ms</div>
+      <div style="width:80px;text-align:right">${r.ping_jitter!=null? r.ping_jitter.toFixed(2):'—'} ms</div>
       <div style="width:100px;text-align:center">
         <button class="btn small view-samples-btn" data-index="${results.length-1}" style="padding:4px 8px;font-size:.85rem;">Ver gráfica</button>
       </div>
@@ -560,6 +563,7 @@
               <div><small class="muted">DL avg</small><div id="sampleDL" style="font-weight:600;">—</div></div>
               <div><small class="muted">UL avg</small><div id="sampleUL" style="font-weight:600;">—</div></div>
               <div><small class="muted">Ping avg</small><div id="samplePing" style="font-weight:600;">—</div></div>
+              <div><small class="muted">Jitter</small><div id="sampleJitter" style="font-weight:600;">—</div></div>
               <div><small class="muted">RSSI</small><div id="sampleRSSI" style="font-weight:600;">—</div></div>
               <div><small class="muted">SSID</small><div id="sampleSSID" style="font-weight:600;">—</div></div>
             </div>
@@ -577,6 +581,7 @@
     $('sampleDL').textContent = r.iperf_dl_mbps!=null ? `${Number(r.iperf_dl_mbps).toFixed(2)} Mbps` : '—';
     $('sampleUL').textContent = r.iperf_ul_mbps!=null ? `${Number(r.iperf_ul_mbps).toFixed(2)} Mbps` : '—';
     $('samplePing').textContent = r.ping_avg!=null ? `${Number(r.ping_avg).toFixed(2)} ms` : '—';
+    $('sampleJitter').textContent = r.ping_jitter!=null ? `${Number(r.ping_jitter).toFixed(2)} ms` : '—';
     $('sampleRSSI').textContent = r.rssi!=null ? `${r.rssi} dBm` : '—';
     $('sampleSSID').textContent = r.ssid || '—';
     
@@ -992,10 +997,12 @@
     const dlVals=results.map(x=>n(x.iperf_dl_mbps)).filter(v=>v!=null);
     const ulVals=results.map(x=>n(x.iperf_ul_mbps)).filter(v=>v!=null);
     const pingVals=results.map(x=>n(x.ping_avg)).filter(v=>v!=null);
+    const jitterVals=results.map(x=>n(x.ping_jitter)).filter(v=>v!=null);
     avgRssi && (avgRssi.textContent = rssiVals.length ? Math.round(avg(rssiVals))+' dBm' : '—');
     avgDl && (avgDl.textContent = dlVals.length ? avg(dlVals).toFixed(2)+' Mbps' : '—');
     avgUl && (avgUl.textContent = ulVals.length ? avg(ulVals).toFixed(2)+' Mbps' : '—');
     avgPing && (avgPing.textContent = pingVals.length ? avg(pingVals).toFixed(2)+' ms' : '—');
+    avgJitter && (avgJitter.textContent = jitterVals.length ? avg(jitterVals).toFixed(2)+' ms' : '—');
     totalTests && (totalTests.textContent = results.length.toString());
   }
 
