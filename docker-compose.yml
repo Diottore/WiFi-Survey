@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  # iperf3 Server
+  iperf-server:
+    image: networkstatic/iperf3
+    container_name: wifi-survey-iperf
+    command: -s
+    ports:
+      - "5201:5201"
+    restart: unless-stopped
+    networks:
+      - wifi-survey
+
+  # WiFi Survey Web Application
+  wifi-survey:
+    build: .
+    container_name: wifi-survey-app
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./raw_results:/app/raw_results
+      - ./wifi_survey_results.csv:/app/wifi_survey_results.csv
+      - ./config.local.ini:/app/config.local.ini:ro
+    environment:
+      - FLASK_ENV=production
+    depends_on:
+      - iperf-server
+    restart: unless-stopped
+    networks:
+      - wifi-survey
+
+networks:
+  wifi-survey:
+    driver: bridge

@@ -1,0 +1,13 @@
+# WiFi Survey - Python Dependencies
+# Flask web framework
+Flask>=3.0.0,<4.0.0
+flask-cors>=4.0.0,<5.0.0
+
+# SSH automation (for iperf3_automation.py)
+paramiko>=3.4.0,<4.0.0
+
+# Optional: Development dependencies
+# Uncomment if you want to use these for development
+# pylint>=3.0.0
+# flake8>=6.0.0
+# black>=23.0.0
