@@ -8,7 +8,7 @@
   // Ángulo y barrido del tacómetro (grados)
   //  - Ookla-like: start=210, sweep=240
   //  - Semicírculo: start=180, sweep=180
-  const GAUGE_START_DEG = 210;
+  const GAUGE_START_DEG = 180;
   const GAUGE_SWEEP_DEG = 240;
 
   // Panels / Mode
