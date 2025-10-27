@@ -598,7 +598,8 @@ def run_point():
         
     except ValueError as e:
         logger.warning(f"Invalid input in run_point: {e}")
-        return jsonify({"ok": False, "error": f"Invalid input: {str(e)}"}), 400
+        # Don't expose internal error details - use generic message
+        return jsonify({"ok": False, "error": "Invalid input format"}), 400
     except Exception as e:
         logger.error(f"Error in run_point: {e}")
         return jsonify({"ok": False, "error": "Internal server error"}), 500
@@ -763,7 +764,8 @@ def start_survey():
         
     except ValueError as e:
         logger.warning(f"Invalid input in start_survey: {e}")
-        return jsonify({"ok": False, "error": f"Invalid input: {str(e)}"}), 400
+        # Don't expose internal error details - use generic message
+        return jsonify({"ok": False, "error": "Invalid input format"}), 400
     except Exception as e:
         logger.error(f"Error in start_survey: {e}")
         return jsonify({"ok": False, "error": "Internal server error"}), 500
@@ -897,19 +899,27 @@ def list_raw():
 def raw_file(fname):
     """Download a specific raw JSON file."""
     try:
-        # Security: prevent path traversal
+        # Security: prevent path traversal - extract only the basename
         safe_fname = os.path.basename(fname)
+        
+        # Additional check: ensure filename doesn't contain path separators
+        if os.path.sep in fname or (os.path.altsep and os.path.altsep in fname):
+            logger.warning(f"Path traversal attempt detected: {fname}")
+            abort(403)
+        
         safe_path = os.path.join(RAW_DIR, safe_fname)
         
-        if not os.path.exists(safe_path):
-            abort(404)
-        
-        # Verify file is within RAW_DIR
-        if not os.path.abspath(safe_path).startswith(os.path.abspath(RAW_DIR)):
+        # Verify file is within RAW_DIR (double check)
+        real_path = os.path.realpath(safe_path)
+        real_raw_dir = os.path.realpath(RAW_DIR)
+        if not real_path.startswith(real_raw_dir + os.path.sep):
             logger.warning(f"Path traversal attempt: {fname}")
             abort(403)
         
-        return send_file(safe_path, as_attachment=True)
+        if not os.path.exists(real_path):
+            abort(404)
+        
+        return send_file(real_path, as_attachment=True)
     except Exception as e:
         logger.error(f"Error downloading raw file: {e}")
         abort(500)
