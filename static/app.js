@@ -32,10 +32,12 @@
 
   // Elements comunes
   const deviceEl = $('device'), pointEl = $('point'), runEl = $('run'), runBtn = $('runBtn');
+  const quickStatusEl = $('quickStatus');
   const pointsEl = $('points'), repeatsEl = $('repeats');
   const startSurveyBtn = $('startSurvey'), cancelTaskBtn = $('cancelTask');
+  const surveyStatusMsgEl = $('surveyStatusMsg');
   const surveyArea = $('surveyArea'), surveyLog = $('surveyLog'), resultsList = $('resultsList'), emptyState=$('emptyState');
-  const avgRssi = $('avgRssi'), avgDl = $('avgDl'), avgUl = $('avgUl'), avgPing = $('avgPing');
+  const avgRssi = $('avgRssi'), avgDl = $('avgDl'), avgUl = $('avgUl'), avgPing = $('avgPing'), totalTests = $('totalTests');
 
   // Live UI
   const liveVisuals = $('liveVisuals');
@@ -63,7 +65,7 @@
 
   // Resultados - controles
   const searchInput = $('searchInput'); const toggleDL = $('toggleDL'), toggleUL = $('toggleUL'), togglePing = $('togglePing');
-  const refreshChartBtn = $('refreshChartBtn'), sortResultsSelect = $('sortResultsSelect');
+  const refreshChartBtn = $('refreshChartBtn'), sortResultsSelect = $('sortResultsSelect'), autoRefreshCheckbox = $('autoRefresh');
 
   // Export
   const exportJsonBtn = $('exportJsonBtn'), clearResultsBtn = $('clearResultsBtn');
@@ -501,39 +503,132 @@
   // Run quick
   runBtn && runBtn.addEventListener('click', async ()=>{
     runBtn.disabled=true;
-    const device=(deviceEl?.value||'phone').trim(), point=(pointEl?.value||'P1').trim(), runIndex=Number(runEl?.value)||1;
+    quickStatusEl && (quickStatusEl.textContent = '');
+    
+    const device=(deviceEl?.value||'').trim();
+    const point=(pointEl?.value||'').trim();
+    const runIndex=Number(runEl?.value)||1;
+    
+    // Validación
+    if(!device){ 
+      quickStatusEl && (quickStatusEl.textContent = '⚠️ Por favor ingresa el nombre del dispositivo');
+      quickStatusEl && (quickStatusEl.style.color = '#ef4444');
+      runBtn.disabled=false; 
+      return; 
+    }
+    if(!point){ 
+      quickStatusEl && (quickStatusEl.textContent = '⚠️ Por favor ingresa el ID del punto');
+      quickStatusEl && (quickStatusEl.style.color = '#ef4444');
+      runBtn.disabled=false; 
+      return; 
+    }
+    if(runIndex < 1 || runIndex > 100){
+      quickStatusEl && (quickStatusEl.textContent = '⚠️ La repetición debe estar entre 1 y 100');
+      quickStatusEl && (quickStatusEl.style.color = '#ef4444');
+      runBtn.disabled=false;
+      return;
+    }
+    
+    quickStatusEl && (quickStatusEl.textContent = '🔄 Iniciando prueba...');
+    quickStatusEl && (quickStatusEl.style.color = '#0b74ff');
+    
     try{
       const res=await fetch('/run_point',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ device, point, run: runIndex }) });
       const j=await res.json();
-      if(!j || !j.ok){ liveSummary && (liveSummary.textContent = `Error: ${j?.error||'unknown'}`); runBtn.disabled=false; return; }
+      if(!j || !j.ok){ 
+        const errorMsg = j?.error || 'Error desconocido';
+        quickStatusEl && (quickStatusEl.textContent = `❌ Error: ${errorMsg}`);
+        quickStatusEl && (quickStatusEl.style.color = '#ef4444');
+        liveSummary && (liveSummary.textContent = `Error: ${errorMsg}`); 
+        runBtn.disabled=false; 
+        return; 
+      }
       lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
       // Resetear gráfica en vivo al iniciar nueva prueba
       liveChartReset(); 
       if(liveVisuals && !liveVisuals.classList.contains('show')) { liveVisuals.classList.add('show'); ensureLiveMiniChart(); }
+      quickStatusEl && (quickStatusEl.textContent = '✅ Prueba iniciada correctamente');
+      quickStatusEl && (quickStatusEl.style.color = '#10b981');
       liveSummary && (liveSummary.textContent='Tarea iniciada, esperando actualizaciones...'); 
       openSseForTask(j.task_id); 
       setMode('results');
-    }catch(e){ liveSummary && (liveSummary.textContent = `Error: ${e.message}`); } finally{ runBtn.disabled=false; }
+    }catch(e){ 
+      quickStatusEl && (quickStatusEl.textContent = `❌ Error de conexión: ${e.message}`);
+      quickStatusEl && (quickStatusEl.style.color = '#ef4444');
+      liveSummary && (liveSummary.textContent = `Error: ${e.message}`); 
+    } finally{ 
+      runBtn.disabled=false; 
+    }
   });
 
   // Survey
   startSurveyBtn && startSurveyBtn.addEventListener('click', async ()=>{
     startSurveyBtn.disabled=true;
-    const device=(surveyDeviceEl?.value||deviceEl?.value||'phone').trim();
-    const ptsRaw=(pointsEl?.value||'').trim(); if(!ptsRaw){ alert('Introduce puntos'); startSurveyBtn.disabled=false; return; }
+    surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '');
+    
+    const device=(surveyDeviceEl?.value||deviceEl?.value||'').trim();
+    const ptsRaw=(pointsEl?.value||'').trim();
+    const repeats=Number(repeatsEl?.value)||1;
+    const manual=!!manualCheckbox?.checked;
+    
+    // Validación
+    if(!device){
+      surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ Por favor ingresa el nombre del dispositivo');
+      surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
+      startSurveyBtn.disabled=false;
+      return;
+    }
+    if(!ptsRaw){ 
+      surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ Por favor ingresa al menos un punto'); 
+      surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
+      startSurveyBtn.disabled=false; 
+      return; 
+    }
+    if(repeats < 1 || repeats > 100){
+      surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ Las repeticiones deben estar entre 1 y 100');
+      surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
+      startSurveyBtn.disabled=false;
+      return;
+    }
+    
     const points= ptsRaw.includes(',') ? ptsRaw.split(',').map(s=>s.trim()).filter(Boolean) : ptsRaw.split(/\s+/).map(s=>s.trim()).filter(Boolean);
-    const repeats=Number(repeatsEl?.value)||1; const manual=!!manualCheckbox?.checked;
+    
+    if(points.length === 0){
+      surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ No se detectaron puntos válidos');
+      surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
+      startSurveyBtn.disabled=false;
+      return;
+    }
+    
+    surveyStatusMsgEl && (surveyStatusMsgEl.textContent = `🔄 Iniciando encuesta con ${points.length} punto(s), ${repeats} repetición(es)...`);
+    surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#0b74ff');
+    
     try{
       const res=await fetch('/start_survey',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ device, points, repeats, manual }) });
       const j=await res.json();
-      if(!j.ok){ surveyLog && (surveyLog.textContent='Error: ' + (j.error||'')); startSurveyBtn.disabled=false; return; }
+      if(!j.ok){ 
+        const errorMsg = j.error || 'Error desconocido';
+        surveyStatusMsgEl && (surveyStatusMsgEl.textContent = `❌ Error: ${errorMsg}`);
+        surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
+        surveyLog && (surveyLog.textContent='Error: ' + errorMsg); 
+        startSurveyBtn.disabled=false; 
+        return; 
+      }
       lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
       cancelTaskBtn && (cancelTaskBtn.disabled=false);
       // Resetear gráfica en vivo al iniciar nueva encuesta
       liveChartReset(); 
       if(liveVisuals && !liveVisuals.classList.contains('show')) { liveVisuals.classList.add('show'); ensureLiveMiniChart(); }
+      surveyStatusMsgEl && (surveyStatusMsgEl.textContent = `✅ Encuesta iniciada con ${points.length} punto(s)`);
+      surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#10b981');
       openSseForTask(j.task_id); surveyArea && (surveyArea.hidden=false); setMode('results');
-    }catch(e){ surveyLog && (surveyLog.textContent='Error al iniciar: '+e); } finally{ startSurveyBtn.disabled=false; }
+    }catch(e){ 
+      surveyStatusMsgEl && (surveyStatusMsgEl.textContent = `❌ Error de conexión: ${e.message}`);
+      surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
+      surveyLog && (surveyLog.textContent='Error al iniciar: '+e); 
+    } finally{ 
+      startSurveyBtn.disabled=false; 
+    }
   });
 
   // Proceed / Cancel
@@ -611,10 +706,26 @@
     avgDl && (avgDl.textContent = dlVals.length ? avg(dlVals).toFixed(2)+' Mbps' : '—');
     avgUl && (avgUl.textContent = ulVals.length ? avg(ulVals).toFixed(2)+' Mbps' : '—');
     avgPing && (avgPing.textContent = pingVals.length ? avg(pingVals).toFixed(2)+' ms' : '—');
+    totalTests && (totalTests.textContent = results.length.toString());
   }
 
   // Init mínimos
   updateSummary();
+  
+  // Auto-refresh for results
+  let autoRefreshInterval = null;
+  autoRefreshCheckbox && autoRefreshCheckbox.addEventListener('change', ()=>{
+    if(autoRefreshCheckbox.checked){
+      autoRefreshInterval = setInterval(()=>{
+        if(document.getElementById('panel-results') && !document.getElementById('panel-results').classList.contains('hidden')){
+          rebuildResultsChart();
+        }
+      }, 5000); // Refresh every 5 seconds
+    } else {
+      if(autoRefreshInterval) clearInterval(autoRefreshInterval);
+      autoRefreshInterval = null;
+    }
+  });
   
   // Health check periódico
   async function checkHealth(){

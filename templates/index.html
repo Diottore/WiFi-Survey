@@ -94,10 +94,19 @@
       .results-content-grid { grid-template-columns: 1fr; }
       #resultsChartWrap { height: var(--chart-h-mobile); }
       #resultsList { max-height: min(50dvh, 520px); }
+      .result-item { font-size: 0.9rem; }
+      .result-item > div { min-width: auto !important; }
     }
     @media (max-width:680px){
       .toolbar-flex { align-items:flex-start; }
       .toolbar-right { width: 100%; }
+      .brand .subtitle { display: none; }
+      .mode-btn { padding: 6px 8px; font-size: 0.9rem; }
+    }
+    @media (max-width:480px){
+      .result-item { flex-direction: column; align-items: flex-start; }
+      .result-item > div { width: 100% !important; text-align: left !important; }
+      .grid { gap: 8px; }
     }
   </style>
 </head>
@@ -129,14 +138,15 @@
           <div class="muted">Ejecuta una medición puntual</div>
 
           <div class="grid" style="margin-top:12px;">
-            <div><label for="device">Equipo (DUT / Tester)</label><input id="device" type="text" value="S24FE" /></div>
-            <div><label for="point">Punto</label><input id="point" type="text" value="P1" /></div>
-            <div><label for="run">Repetición</label><input id="run" type="number" min="1" value="1" /></div>
+            <div><label for="device">Equipo (DUT / Tester)</label><input id="device" type="text" value="S24FE" placeholder="Nombre del dispositivo" /></div>
+            <div><label for="point">Punto</label><input id="point" type="text" value="P1" placeholder="ID del punto (ej: P1, A1)" /></div>
+            <div><label for="run">Repetición</label><input id="run" type="number" min="1" max="100" value="1" /></div>
             <div style="grid-column:1 / -1; display:flex; gap:8px; margin-top:6px; flex-wrap:wrap;">
-              <button id="runBtn" class="btn primary">Run</button>
-              <button id="downloadBtn" class="btn outline">CSV</button>
-              <button id="showLiveQuick" class="btn outline" style="margin-left:auto;">Mostrar panel</button>
+              <button id="runBtn" class="btn primary">▶ Ejecutar prueba</button>
+              <button id="downloadBtn" class="btn outline">📥 CSV</button>
+              <button id="showLiveQuick" class="btn outline" style="margin-left:auto;">📊 Mostrar panel en vivo</button>
             </div>
+            <div id="quickStatus" class="muted" style="grid-column:1 / -1; margin-top:4px; min-height:20px;"></div>
           </div>
         </section>
       </section>
@@ -148,18 +158,19 @@
           <div class="muted">Automatiza varias mediciones</div>
 
           <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
-            <div><label for="survey_device">Nombre del equipo</label><input id="survey_device" type="text" value="S24FE" /></div>
-            <div><label for="points">Puntos (espacios o comas)</label><textarea id="points" rows="3" placeholder="A1 A2 A3"></textarea></div>
+            <div><label for="survey_device">Nombre del equipo</label><input id="survey_device" type="text" value="S24FE" placeholder="Identificador del dispositivo" /></div>
+            <div><label for="points">Puntos (espacios o comas)</label><textarea id="points" rows="3" placeholder="A1 A2 A3 o A1, A2, A3"></textarea></div>
 
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-              <div style="min-width:160px;"><label for="repeats">Repeticiones</label><input id="repeats" type="number" min="1" value="1" /></div>
-              <label style="display:inline-flex;align-items:center;gap:8px;"><input id="manual_confirm" type="checkbox" checked /> <span class="muted">Pedir confirmación</span></label>
+              <div style="min-width:160px;"><label for="repeats">Repeticiones por punto</label><input id="repeats" type="number" min="1" max="100" value="1" /></div>
+              <label style="display:inline-flex;align-items:center;gap:8px;"><input id="manual_confirm" type="checkbox" checked /> <span class="muted">Pedir confirmación en cada punto</span></label>
               <div style="margin-left:auto; display:flex; gap:8px;">
-                <button id="startSurvey" class="btn primary">Iniciar</button>
-                <button id="cancelTask" class="btn outline" disabled>Cancelar</button>
-                <button id="showLiveSurvey" class="btn outline">Mostrar panel</button>
+                <button id="startSurvey" class="btn primary">▶ Iniciar encuesta</button>
+                <button id="cancelTask" class="btn outline" disabled>⏹ Cancelar</button>
+                <button id="showLiveSurvey" class="btn outline">📊 Mostrar panel</button>
               </div>
             </div>
+            <div id="surveyStatusMsg" class="muted" style="min-height:20px;"></div>
 
             <div id="surveyArea" class="survey-area" hidden>
               <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
@@ -239,6 +250,9 @@
                     <option value="dl-desc">DL desc</option>
                     <option value="dl-asc">DL asc</option>
                   </select>
+                  <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">
+                    <input type="checkbox" id="autoRefresh" /> Auto-actualizar
+                  </label>
                   <button id="refreshChartBtn" class="btn outline">Actualizar</button>
                 </div>
               </div>
@@ -274,6 +288,7 @@
                   <div><div class="big" id="avgDl">—</div><div class="muted">DL avg</div></div>
                   <div><div class="big" id="avgUl">—</div><div class="muted">UL avg</div></div>
                   <div><div class="big" id="avgPing">—</div><div class="muted">Ping avg ms</div></div>
+                  <div><div class="big" id="totalTests">0</div><div class="muted">Total pruebas</div></div>
                 </div>
                 <div class="summary-actions">
                   <button id="exportJsonBtn" class="btn">Exportar JSON</button>
