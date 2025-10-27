@@ -1,11 +1,11 @@
-// static/app.js v7 — Resultados pulidos con gráfico restaurado (Chart.js), filtros y orden.
-// Mantiene tacómetro custom (v6), SSE/polling y exportaciones.
+// static/app.js v8 — Resultados móviles sin solapamientos + gráfico robusto + tacómetro custom.
+// Mantiene SSE/polling y exportaciones. Ángulo del tacómetro por defecto 180.
 
 (() => {
   const $ = id => document.getElementById(id);
 
-  // Config tacómetro
-  const GAUGE_START_DEG = Number(localStorage.getItem('gaugeStartDeg') ?? 180); // como lo dejaste
+  // Config tacómetro (persistente si guardas en localStorage)
+  const GAUGE_START_DEG = Number(localStorage.getItem('gaugeStartDeg') ?? 180);
   const GAUGE_SWEEP_DEG = Number(localStorage.getItem('gaugeSweepDeg') ?? 240);
 
   // Panels / Mode
@@ -21,7 +21,15 @@
     if (mode === 'survey' && modeSurveyBtn) modeSurveyBtn.classList.add('active');
     if (mode === 'results' && modeResultsBtn) modeResultsBtn.classList.add('active');
     if (persist) try { localStorage.setItem('uiMode', mode); } catch(e){}
-    if (mode === 'results') ensureResultsChart();
+    if (mode === 'results') {
+      // Asegurar que el gráfico se cree y se mida después de estar visible.
+      ensureResultsChart();
+      requestAnimationFrame(()=> {
+        requestAnimationFrame(()=> {
+          try { resultsChart && resultsChart.resize(); } catch(e){}
+        });
+      });
+    }
   }
   modeQuickBtn && modeQuickBtn.addEventListener('click', ()=> setMode('quick'));
   modeSurveyBtn && modeSurveyBtn.addEventListener('click', ()=> setMode('survey'));
@@ -36,7 +44,8 @@
   const pointsEl = $('points'), repeatsEl = $('repeats');
   const startSurveyBtn = $('startSurvey'), cancelTaskBtn = $('cancelTask');
   const surveyArea = $('surveyArea'), surveyLog = $('surveyLog');
-  const resultsList = $('resultsList'), avgRssi = $('avgRssi'), avgDl = $('avgDl'), avgUl = $('avgUl'), avgPing = $('avgPing');
+  const resultsList = $('resultsList'), emptyState = $('emptyState');
+  const avgRssi = $('avgRssi'), avgDl = $('avgDl'), avgUl = $('avgUl'), avgPing = $('avgPing');
 
   // Live UI
   const liveVisuals = $('liveVisuals');
@@ -62,19 +71,18 @@
   const exportCsvWideBtn = $('exportCsvWide'), exportCsvLongBtn = $('exportCsvLong'), exportSummaryJsonBtn = $('exportSummaryJson');
 
   // Estado
-  let results = [];                 // acumulado en memoria
+  let results = [];
   let lastSurveyTaskId = null;
   let currentSse = null;
 
   // ======================
-  // Tacómetro (canvas)
+  // Tacómetro (canvas) — igual que v6/v7 con etiquetas sobre ticks
   // ======================
   class Speedometer {
     constructor(canvas, opts = {}) {
       this.canvas = canvas;
       this.ctx = canvas.getContext('2d');
-      this.value = 0;
-      this.animVal = 0;
+      this.value = 0; this.animVal = 0;
       this.max = opts.max || 200;
       this.displayStep = this.niceStep(this.max, 6);
       this.displayMax = this.displayStep * 6;
@@ -82,8 +90,7 @@
       this.startDeg = Number(opts.startDeg ?? 180);
       this.sweepDeg = Number(opts.sweepDeg ?? 240);
       this.pixelRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-      this._raf = null;
-      this._lastTs = 0;
+      this._raf = null; this._lastTs = 0;
       this._resizeObserver = new ResizeObserver(()=> this.resize());
       this._resizeObserver.observe(canvas.parentElement || canvas);
       this.resize();
@@ -96,7 +103,7 @@
       const n = base<=1?1:base<=2?2:base<=5?5:10;
       return n * pow;
     }
-    niceMaxFor(v){ const step = this.niceStep(v,6); return step*6; }
+    niceMaxFor(v){ const step = this.niceStep(v, 6); return step * 6; }
     formatValue(val){
       if(val>=1000){ const g=val/1000; return {num: g>=10? String(Math.round(g)) : g.toFixed(1), unit:'Gbps'}; }
       return {num: Number(val).toFixed(val>=100?1:2), unit:'Mbps'};
@@ -200,13 +207,13 @@
   function setGaugeValue(v){ if(!speedo) createGauge(0,200); speedo && speedo.set(Number(v)||0); }
 
   // ======================
-  // Gráfico de Resultados (Chart.js)
+  // Gráfico de Resultados (Chart.js) — robusto en móvil
   // ======================
   let resultsChart = null;
   let chartRO = null;
   function ensureResultsChart(){
     const canvas = $('throughputChart'); if(!canvas) return;
-    if(resultsChart) { resultsChart.resize(); return; }
+    if(resultsChart) { try { resultsChart.resize(); } catch(e){} return; }
 
     const ctx = canvas.getContext('2d');
     resultsChart = new Chart(ctx, {
@@ -222,6 +229,7 @@
       options: {
         responsive:true, maintainAspectRatio:false,
         interaction:{mode:'index', intersect:false},
+        animation:{ duration: 250 },
         plugins:{ legend:{ position:'top' }, tooltip:{ callbacks:{
           title:(items)=> items?.[0]?.label || '',
           label:(item)=> `${item.dataset.label}: ${Number(item.parsed.y).toFixed(item.dataset.yAxisID==='y'?2:2)}`
@@ -234,13 +242,14 @@
       }
     });
 
-    // ResizeObserver para que nunca quede en 0x0 al mostrar el panel
     const card = $('resultsChartCard');
     if(card && 'ResizeObserver' in window){
-      chartRO = new ResizeObserver(()=> { try { resultsChart.resize(); } catch(e){} });
+      chartRO = new ResizeObserver(()=> {
+        try { resultsChart.resize(); } catch(e){}
+      });
       chartRO.observe(card);
     }
-    // Inicializar con los datos actuales (si hay)
+    // primer render con datos actuales si existieran
     rebuildResultsChart();
   }
 
@@ -265,7 +274,6 @@
   function rebuildResultsChart(){
     if(!resultsChart) return;
     const arr = getFilteredSortedResults();
-
     const labels = arr.map(r => r.point || new Date(r.timestamp).toLocaleTimeString());
     const dl = arr.map(r => Number(r.iperf_dl_mbps)||0);
     const ul = arr.map(r => Number(r.iperf_ul_mbps)||0);
@@ -276,7 +284,6 @@
     resultsChart.data.datasets[1].data = ul;
     resultsChart.data.datasets[2].data = ping;
 
-    // toggles
     if(toggleDL) resultsChart.data.datasets[0].hidden = !toggleDL.checked;
     if(toggleUL) resultsChart.data.datasets[1].hidden = !toggleUL.checked;
     if(togglePing) resultsChart.data.datasets[2].hidden = !togglePing.checked;
@@ -286,7 +293,6 @@
 
   function addLatestPointToChart(r){
     if(!resultsChart) return;
-    // Insertar al inicio (mostramos más recientes primero)
     resultsChart.data.labels.unshift(r.point || new Date(r.timestamp).toLocaleTimeString());
     resultsChart.data.datasets[0].data.unshift(Number(r.iperf_dl_mbps)||0);
     resultsChart.data.datasets[1].data.unshift(Number(r.iperf_ul_mbps)||0);
@@ -296,14 +302,14 @@
       resultsChart.data.labels.pop();
       resultsChart.data.datasets.forEach(ds=>ds.data.pop());
     }
-    // respetar toggles
     if(toggleDL) resultsChart.data.datasets[0].hidden = !toggleDL.checked;
     if(toggleUL) resultsChart.data.datasets[1].hidden = !toggleUL.checked;
     if(togglePing) resultsChart.data.datasets[2].hidden = !togglePing.checked;
     resultsChart.update('active');
   }
 
-  // Eventos de gráfico/controles
+  // Controles resultados
+  function debounce(fn, ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
   toggleDL && toggleDL.addEventListener('change', rebuildResultsChart);
   toggleUL && toggleUL.addEventListener('change', rebuildResultsChart);
   togglePing && togglePing.addEventListener('change', rebuildResultsChart);
@@ -311,10 +317,8 @@
   sortResultsSelect && sortResultsSelect.addEventListener('change', rebuildResultsChart);
   refreshChartBtn && refreshChartBtn.addEventListener('click', rebuildResultsChart);
 
-  function debounce(fn, ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
-
   // ======================
-  // SSE / Polling (igual)
+  // SSE / Polling
   // ======================
   function openSseForTask(task_id){
     if(!task_id) return;
@@ -383,15 +387,12 @@
   function handleFinalResult(res){
     if(!res){ liveSummary && (liveSummary.textContent = 'Prueba finalizada (sin resultado)'); return; }
     if(Array.isArray(res)){
-      res.forEach(r => {
-        const mapped = mapFinalToResult(r);
-        pushResultToList(mapped);
-      });
+      res.forEach(r => pushResultToList(mapFinalToResult(r)));
+      ensureResultsChart();
       rebuildResultsChart();
       liveSummary && (liveSummary.textContent = `Encuesta finalizada: ${res.length} puntos`);
     } else {
       const mapped = mapFinalToResult(res);
-      // animación gauge pequeña
       const dl = Number(mapped.iperf_dl_mbps || 0);
       const start = speedo ? speedo.animVal : 0;
       const target = Math.max(start, dl);
@@ -435,6 +436,7 @@
   function pushResultToList(r){
     results.unshift(r);
     if(results.length > 500) results.pop();
+
     const card = document.createElement('div');
     card.className = 'result-item';
     card.innerHTML = `
@@ -447,7 +449,8 @@
       <div style="width:80px;text-align:right">${r.ping_avg!=null? r.ping_avg.toFixed(2):'—'}</div>
       <div style="width:60px;text-align:center"><a class="muted" href="/raw/${(r.raw_file||'').split('/').pop()}" target="_blank">raw</a></div>
     `;
-    resultsList && resultsList.prepend(card);
+    if(resultsList) resultsList.prepend(card);
+    if(emptyState) emptyState.style.display = results.length ? 'none' : 'block';
   }
 
   // Run quick
@@ -516,7 +519,7 @@
     try { await fetch(`/task_cancel/${encodeURIComponent(lastSurveyTaskId)}`, { method:'POST' }); } catch(e){ console.warn('Cancel error', e); }
   });
 
-  // Export
+  // Export helpers
   function download(name, text, mime='text/plain'){
     const blob = new Blob([text], {type:mime});
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); URL.revokeObjectURL(a.href);
@@ -585,7 +588,7 @@
     download('wifi_summary.json', JSON.stringify(summary, null, 2), 'application/json');
   }
   exportJsonBtn?.addEventListener('click', ()=> download('wifi_recent.json', JSON.stringify(results.slice(0,1000), null, 2), 'application/json'));
-  clearResultsBtn?.addEventListener('click', ()=> { results=[]; resultsList && (resultsList.innerHTML=''); if(resultsChart){ resultsChart.data.labels=[]; resultsChart.data.datasets.forEach(ds=>ds.data=[]); resultsChart.update(); } updateSummary(); });
+  clearResultsBtn?.addEventListener('click', ()=> { results=[]; resultsList && (resultsList.innerHTML=''); if(resultsChart){ resultsChart.data.labels=[]; resultsChart.data.datasets.forEach(ds=>ds.data=[]); resultsChart.update(); } updateSummary(); emptyState && (emptyState.style.display = 'block'); });
   exportCsvWideBtn?.addEventListener('click', exportCsvWide);
   exportCsvLongBtn?.addEventListener('click', exportCsvLong);
   exportSummaryJsonBtn?.addEventListener('click', exportSummaryJson);
@@ -608,5 +611,5 @@
   updateSummary();
 
   // Expose for debug
-  window.__ws = Object.assign(window.__ws || {}, { createGauge, setGaugeValue, openSseForTask, rebuildResultsChart, ensureResultsChart });
+  window.__ws = Object.assign(window.__ws || {}, { ensureResultsChart, rebuildResultsChart });
 })();
