@@ -13,174 +13,757 @@
   <script src="/static/app.js?v=13" defer></script>
 
   <style>
+    /* ============================================
+       CSS Variables - Centralized Design Tokens
+       ============================================ */
     :root {
-      --bg:#f6f7fb; --card:#fff; --muted:#6b7280; --primary:#0b74ff; --gap:12px;
-      --chart-h: clamp(220px, 34vh, 360px);
-      --chart-h-mobile: clamp(220px, 44dvh, 420px);
+      /* Colors - Main Palette */
+      --bg: #f6f7fb;              /* Background color */
+      --card: #fff;                /* Card background */
+      --muted: #6b7280;            /* Muted text (WCAG AA compliant on white) */
+      --primary: #0b74ff;          /* Primary brand color */
+      --primary-hover: #0960d9;    /* Primary hover state */
+      --success: #10b981;          /* Success state */
+      --danger: #ef4444;           /* Error/danger state */
+      --warning: #f59e0b;          /* Warning state */
+      
+      /* Spacing */
+      --gap: 12px;                 /* Standard gap between elements */
+      
+      /* Chart Heights */
+      --chart-h: clamp(220px, 34vh, 360px);        /* Desktop chart height */
+      --chart-h-mobile: clamp(220px, 44dvh, 420px); /* Mobile chart height */
+      
+      /* Transitions */
+      --transition-fast: 150ms ease;
+      --transition-normal: 250ms ease;
+      
+      /* Shadows */
+      --shadow-sm: 0 1px 3px rgba(2, 6, 23, 0.08);
+      --shadow-md: 0 1px 6px rgba(2, 6, 23, 0.06);
+      --shadow-lg: 0 4px 12px rgba(2, 6, 23, 0.08);
     }
-    * { box-sizing:border-box }
-    body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial; margin:0; background:var(--bg); color:#0f172a; }
-    .container { max-width:1200px; margin:16px auto; padding:0 12px; }
+    /* ============================================
+       Base Styles
+       ============================================ */
+    * { 
+      box-sizing: border-box;
+    }
+    
+    body { 
+      font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial; 
+      margin: 0; 
+      background: var(--bg); 
+      color: #0f172a;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    
+    .container { 
+      max-width: 1200px; 
+      margin: 16px auto; 
+      padding: 0 12px; 
+    }
 
-    /* Topbar */
-    .topbar { position:sticky; top:0; z-index:40; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 16px; background:linear-gradient(90deg,#fff,#fbfdff); border-bottom:1px solid rgba(0,0,0,0.05); }
-    .brand { display:flex; gap:12px; align-items:center; min-width:0; }
-    .brand .title { font-weight:700; }
-    .brand .subtitle { color:#6b7280; font-size:.9rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .top-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-    .status { width:10px; height:10px; border-radius:50%; margin-right:4px; transition:background 0.3s; }
-    .status.online { background:#10b981; box-shadow:0 0 0 2px rgba(16,185,129,0.2); }
-    .status.offline { background:#ef4444; box-shadow:0 0 0 2px rgba(239,68,68,0.2); }
-    .mode-switch { display:flex; gap:6px; border-radius:10px; padding:4px; background:#f8fafc; border:1px solid #e5e7eb; }
-    .mode-btn { padding:6px 10px; border-radius:8px; border:1px solid transparent; cursor:pointer; background:transparent; font-weight:600; }
-    .mode-btn.active { background:var(--card); border-color:#e5e7eb; box-shadow:0 2px 10px rgba(2,6,23,0.08); }
+    /* ============================================
+       Topbar / Header
+       ============================================ */
+    .topbar { 
+      position: sticky; 
+      top: 0; 
+      z-index: 40; 
+      display: flex; 
+      justify-content: space-between; 
+      align-items: center; 
+      gap: 12px; 
+      padding: 12px 16px; 
+      background: linear-gradient(90deg, #fff, #fbfdff); 
+      border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+      box-shadow: var(--shadow-sm);
+    }
+    
+    .brand { 
+      display: flex; 
+      gap: 12px; 
+      align-items: center; 
+      min-width: 0; 
+    }
+    
+    .brand .title { 
+      font-weight: 700;
+      font-size: clamp(1rem, 2.5vw, 1.1rem);
+    }
+    
+    .brand .subtitle { 
+      color: var(--muted); 
+      font-size: 0.9rem; 
+      white-space: nowrap; 
+      overflow: hidden; 
+      text-overflow: ellipsis; 
+    }
+    
+    .top-actions { 
+      display: flex; 
+      gap: 8px; 
+      align-items: center; 
+      flex-wrap: wrap; 
+    }
+    
+    /* Status Indicator */
+    .status { 
+      width: 10px; 
+      height: 10px; 
+      border-radius: 50%; 
+      margin-right: 4px; 
+      transition: background var(--transition-normal);
+    }
+    
+    .status.online { 
+      background: var(--success); 
+      box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+    }
+    
+    .status.offline { 
+      background: var(--danger); 
+      box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
+    }
+    /* ============================================
+       Mode Switch / Tabs
+       ============================================ */
+    .mode-switch { 
+      display: flex; 
+      gap: 6px; 
+      border-radius: 10px; 
+      padding: 4px; 
+      background: #f8fafc; 
+      border: 1px solid #e5e7eb;
+    }
+    
+    .mode-btn { 
+      padding: 6px 10px; 
+      border-radius: 8px; 
+      border: 1px solid transparent; 
+      cursor: pointer; 
+      background: transparent; 
+      font-weight: 600;
+      transition: all var(--transition-fast);
+      color: #64748b;
+    }
+    
+    .mode-btn:hover {
+      background: rgba(255, 255, 255, 0.6);
+      color: #334155;
+    }
+    
+    .mode-btn:focus {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
+    }
+    
+    .mode-btn.active { 
+      background: var(--card); 
+      border-color: #e5e7eb; 
+      box-shadow: 0 2px 10px rgba(2, 6, 23, 0.08);
+      color: #0f172a;
+    }
 
-    main { padding-bottom: 60px; }
-    .panel { display:block; }
-    .panel.hidden { display:none; }
+    /* ============================================
+       Main Content & Panels
+       ============================================ */
+    main { 
+      padding-bottom: 60px;
+    }
+    
+    .panel { 
+      display: block;
+      animation: fadeIn var(--transition-normal);
+    }
+    
+    .panel.hidden { 
+      display: none;
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
 
-    /* Cards / forms */
-    .card { background:var(--card); padding:14px; border-radius:12px; box-shadow:0 1px 6px rgba(2,6,23,0.06); margin-bottom:var(--gap); }
-    .grid { display:grid; gap:12px; grid-template-columns: 1fr 1fr 140px; align-items:start; }
-    input, textarea, select { width:100%; padding:10px; border-radius:10px; border:1px solid #e6e9ee; background:#fff; }
-    textarea { resize:vertical; min-height:60px; }
-    .btn { padding:9px 12px; border-radius:10px; border:1px solid #ddd; background:#fff; cursor:pointer; font-weight:600; }
-    .btn.primary { background:#0b74ff; color:#fff; border-color:#0b74ff; }
-    .btn.outline { background:#fff; border-color:#cbd5e1; }
-    .muted { color:#6b7280; font-size:.92rem; }
-    .controls-row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    /* ============================================
+       Cards & Forms
+       ============================================ */
+    .card { 
+      background: var(--card); 
+      padding: 14px; 
+      border-radius: 12px; 
+      box-shadow: var(--shadow-md);
+      margin-bottom: var(--gap);
+      transition: box-shadow var(--transition-normal);
+    }
+    
+    .card:hover {
+      box-shadow: var(--shadow-lg);
+    }
+    
+    .grid { 
+      display: grid; 
+      gap: 12px; 
+      grid-template-columns: 1fr 1fr 140px; 
+      align-items: start; 
+    }
+    
+    /* Form Elements */
+    input, textarea, select { 
+      width: 100%; 
+      padding: 10px; 
+      border-radius: 10px; 
+      border: 1px solid #e6e9ee; 
+      background: #fff;
+      font-size: 1rem;
+      transition: all var(--transition-fast);
+    }
+    
+    input:focus, textarea:focus, select:focus {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
+      border-color: var(--primary);
+    }
+    
+    textarea { 
+      resize: vertical; 
+      min-height: 60px;
+      font-family: inherit;
+    }
+    
+    label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 500;
+      margin-bottom: 4px;
+      color: #334155;
+    }
+    /* ============================================
+       Buttons
+       ============================================ */
+    .btn { 
+      padding: 9px 12px; 
+      border-radius: 10px; 
+      border: 1px solid #ddd; 
+      background: #fff; 
+      cursor: pointer; 
+      font-weight: 600;
+      font-size: 0.95rem;
+      transition: all var(--transition-fast);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-height: 38px;
+    }
+    
+    .btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+    }
+    
+    .btn:active:not(:disabled) {
+      transform: translateY(0);
+    }
+    
+    .btn:focus {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
+    }
+    
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    
+    .btn.primary { 
+      background: var(--primary); 
+      color: #fff; 
+      border-color: var(--primary);
+    }
+    
+    .btn.primary:hover:not(:disabled) {
+      background: var(--primary-hover);
+      border-color: var(--primary-hover);
+    }
+    
+    .btn.outline { 
+      background: #fff; 
+      border-color: #cbd5e1;
+      color: #475569;
+    }
+    
+    .btn.outline:hover:not(:disabled) {
+      background: #f8fafc;
+      border-color: #94a3b8;
+    }
+    
+    .btn.small {
+      padding: 6px 10px;
+      font-size: 0.875rem;
+      min-height: 32px;
+    }
+    /* ============================================
+       Typography Utilities
+       ============================================ */
+    .muted { 
+      color: var(--muted); 
+      font-size: 0.92rem;
+    }
+    
+    .big {
+      font-size: 1.5rem;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+    
+    h2, h3, h4 {
+      margin-top: 0;
+      line-height: 1.3;
+    }
+    
+    /* ============================================
+       Controls & Toolbars
+       ============================================ */
+    .controls-row { 
+      display: flex; 
+      gap: 12px; 
+      align-items: center; 
+      flex-wrap: wrap;
+    }
 
-    /* Live panel (sin tacómetro) */
-    #liveVisuals { display:none; gap:16px; align-items:flex-start; margin-top:8px; flex-wrap:wrap; }
-    #liveVisuals.show { display:flex; }
-    .chart-card { flex:1; min-width:260px; min-height:160px; padding:10px; border-radius:10px; box-shadow:none; overflow:hidden; }
-    .progress-row { display:flex; gap:12px; align-items:center; margin-top:8px; }
-    .progress-bar { height:12px; width:100%; background:#f1f5f9; border-radius:8px; overflow:hidden; }
-    .progress-bar > .fill { height:100%; background:linear-gradient(90deg,#0b74ff,#06b6d4); width:0%; transition:width 200ms linear; }
-    .live-stats { margin-top:8px; font-size:0.95rem; color:#111827; text-align:center; word-break:break-word; }
+    /* ============================================
+       Live Panel / Visuals
+       ============================================ */
+    #liveVisuals { 
+      display: none; 
+      gap: 16px; 
+      align-items: flex-start; 
+      margin-top: 8px; 
+      flex-wrap: wrap;
+    }
+    
+    #liveVisuals.show { 
+      display: flex;
+      animation: fadeIn var(--transition-normal);
+    }
+    
+    .chart-card { 
+      flex: 1; 
+      min-width: 260px; 
+      min-height: 160px; 
+      padding: 10px; 
+      border-radius: 10px; 
+      box-shadow: none; 
+      overflow: hidden;
+    }
+    
+    .progress-row { 
+      display: flex; 
+      gap: 12px; 
+      align-items: center; 
+      margin-top: 8px;
+    }
+    
+    .progress-bar { 
+      height: 12px; 
+      width: 100%; 
+      background: #f1f5f9; 
+      border-radius: 8px; 
+      overflow: hidden;
+      position: relative;
+    }
+    
+    .progress-bar > .fill { 
+      height: 100%; 
+      background: linear-gradient(90deg, var(--primary), #06b6d4); 
+      width: 0%; 
+      transition: width 200ms linear;
+      border-radius: 8px;
+    }
+    
+    .live-stats { 
+      margin-top: 8px; 
+      font-size: 0.95rem; 
+      color: #111827; 
+      text-align: center; 
+      word-break: break-word;
+    }
 
-    /* Contenedores ECharts: usa DIV, no canvas */
-    #liveMiniChartWrap { height: 200px; position: relative; }
-    #liveMiniChart { width:100%; height:100%; }
+    /* ============================================
+       ECharts Containers
+       ============================================ */
+    #liveMiniChartWrap { 
+      height: 200px; 
+      position: relative;
+    }
+    
+    #liveMiniChart { 
+      width: 100%; 
+      height: 100%;
+    }
 
-    /* Results */
-    .results-grid { display:grid; gap:12px; grid-template-areas: "chart" "content"; grid-template-rows: auto auto; }
-    .results-chart.card { grid-area: chart; position: relative; overflow: hidden; padding-top: 0; }
+    /* ============================================
+       Results Section
+       ============================================ */
+    .results-grid { 
+      display: grid; 
+      gap: 12px; 
+      grid-template-areas: "chart" "content"; 
+      grid-template-rows: auto auto;
+    }
+    
+    .results-chart.card { 
+      grid-area: chart; 
+      position: relative; 
+      overflow: hidden; 
+      padding-top: 0;
+    }
+    
     .results-toolbar {
-      position: sticky; top: max(0px, env(safe-area-inset-top));
-      z-index: 2; background: #fff;
+      position: sticky; 
+      top: max(0px, env(safe-area-inset-top));
+      z-index: 2; 
+      background: #fff;
       padding: 10px 0 10px;
       border-bottom: 1px solid #f1f5f9;
       margin: 0 0 8px 0;
     }
-    .toolbar-flex { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+    
+    .toolbar-flex { 
+      display: flex; 
+      justify-content: space-between; 
+      align-items: center; 
+      gap: 8px; 
+      flex-wrap: wrap;
+    }
+    
     .toolbar-right {
-      display:flex; gap:8px; align-items:center; flex-wrap:wrap;
-      overflow-x:auto; white-space:nowrap; -webkit-overflow-scrolling: touch;
+      display: flex; 
+      gap: 8px; 
+      align-items: center; 
+      flex-wrap: wrap;
+      overflow-x: auto; 
+      white-space: nowrap; 
+      -webkit-overflow-scrolling: touch;
       padding-bottom: 2px;
     }
-    #resultsChartWrap { position: relative; height: var(--chart-h); }
-    #throughputChart { width:100%; height:100%; }
-
-    .results-content.card { grid-area: content; }
-    .results-content-grid { display:grid; gap:16px; grid-template-columns: 2fr 1fr; align-items:start; }
-    #resultsList { display:flex; flex-direction:column; gap:8px; max-height: 56vh; overflow:auto; padding-right:6px; }
-    .result-item { display:flex; gap:12px; padding:8px 6px; border-bottom:1px solid #f3f4f6; align-items:center; word-break:break-word; flex-wrap:wrap; }
-    .summary-card { min-width:240px; max-width:360px; }
-    .summary-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
-
-    @media (max-width:980px){
-      .grid { grid-template-columns: 1fr; }
-      .results-content-grid { grid-template-columns: 1fr; }
-      #resultsChartWrap { height: var(--chart-h-mobile); }
-      #resultsList { max-height: min(50dvh, 520px); }
-      .result-item { font-size: 0.9rem; }
-      .result-item > div { min-width: auto !important; }
+    
+    #resultsChartWrap { 
+      position: relative; 
+      height: var(--chart-h);
     }
-    @media (max-width:680px){
-      .toolbar-flex { align-items:flex-start; }
-      .toolbar-right { width: 100%; }
-      .brand .subtitle { display: none; }
-      .mode-btn { padding: 6px 8px; font-size: 0.9rem; }
+    
+    #throughputChart { 
+      width: 100%; 
+      height: 100%;
     }
-    @media (max-width:480px){
-      .result-item { flex-direction: column; align-items: flex-start; }
-      .result-item > div { width: 100% !important; text-align: left !important; }
-      .grid { gap: 8px; }
+
+    .results-content.card { 
+      grid-area: content;
+    }
+    
+    .results-content-grid { 
+      display: grid; 
+      gap: 16px; 
+      grid-template-columns: 2fr 1fr; 
+      align-items: start;
+    }
+    
+    #resultsList { 
+      display: flex; 
+      flex-direction: column; 
+      gap: 8px; 
+      max-height: 56vh; 
+      overflow: auto; 
+      padding-right: 6px;
+    }
+    
+    .result-item { 
+      display: flex; 
+      gap: 12px; 
+      padding: 8px 6px; 
+      border-bottom: 1px solid #f3f4f6; 
+      align-items: center; 
+      word-break: break-word; 
+      flex-wrap: wrap;
+      transition: background var(--transition-fast);
+    }
+    
+    .result-item:hover {
+      background: #f8fafc;
+      border-radius: 8px;
+    }
+    
+    .summary-card { 
+      min-width: 240px; 
+      max-width: 360px;
+    }
+    
+    .summary-actions { 
+      display: flex; 
+      gap: 8px; 
+      flex-wrap: wrap; 
+      margin-top: 8px;
+    }
+
+    /* ============================================
+       Responsive Design - Tablet & Below
+       ============================================ */
+    @media (max-width: 980px) {
+      .grid { 
+        grid-template-columns: 1fr;
+      }
+      
+      .results-content-grid { 
+        grid-template-columns: 1fr;
+      }
+      
+      #resultsChartWrap { 
+        height: var(--chart-h-mobile);
+      }
+      
+      #resultsList { 
+        max-height: min(50dvh, 520px);
+      }
+      
+      .result-item { 
+        font-size: 0.9rem;
+      }
+      
+      .result-item > div { 
+        min-width: auto !important;
+      }
+    }
+    
+    /* ============================================
+       Responsive Design - Mobile
+       ============================================ */
+    @media (max-width: 680px) {
+      .toolbar-flex { 
+        align-items: flex-start;
+      }
+      
+      .toolbar-right { 
+        width: 100%;
+      }
+      
+      .brand .subtitle { 
+        display: none;
+      }
+      
+      .mode-btn { 
+        padding: 6px 8px; 
+        font-size: 0.9rem;
+      }
+      
+      .container {
+        padding: 0 8px;
+      }
+    }
+    
+    /* ============================================
+       Responsive Design - Extra Small Mobile
+       ============================================ */
+    @media (max-width: 480px) {
+      .result-item { 
+        flex-direction: column; 
+        align-items: flex-start;
+      }
+      
+      .result-item > div { 
+        width: 100% !important; 
+        text-align: left !important;
+      }
+      
+      .grid { 
+        gap: 8px;
+      }
+      
+      .topbar {
+        padding: 8px 12px;
+      }
+      
+      .mode-btn {
+        padding: 5px 6px;
+        font-size: 0.85rem;
+      }
+    }
+    
+    /* ============================================
+       Loading Spinner
+       ============================================ */
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    
+    .btn.loading {
+      position: relative;
+      color: transparent;
+      pointer-events: none;
+    }
+    
+    .btn.loading::after {
+      content: "";
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      top: 50%;
+      left: 50%;
+      margin-left: -8px;
+      margin-top: -8px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-top-color: currentColor;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    
+    .btn.outline.loading::after {
+      border-color: rgba(71, 85, 105, 0.3);
+      border-top-color: #475569;
+    }
+    
+    /* ============================================
+       Tooltips (basic implementation)
+       ============================================ */
+    [data-tooltip] {
+      position: relative;
+    }
+    
+    [data-tooltip]::before {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%) translateY(-4px);
+      padding: 4px 8px;
+      background: #1e293b;
+      color: #fff;
+      font-size: 0.75rem;
+      border-radius: 4px;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity var(--transition-fast);
+      z-index: 100;
+    }
+    
+    [data-tooltip]:hover::before,
+    [data-tooltip]:focus::before {
+      opacity: 1;
+    }
+    
+    /* ============================================
+       Focus Visible (improved keyboard navigation)
+       ============================================ */
+    *:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
+    }
+    
+    /* Skip to main content link for accessibility */
+    .skip-link {
+      position: absolute;
+      top: -40px;
+      left: 0;
+      background: var(--primary);
+      color: white;
+      padding: 8px;
+      text-decoration: none;
+      z-index: 100;
+    }
+    
+    .skip-link:focus {
+      top: 0;
     }
   </style>
 </head>
 <body>
-  <div class="app">
+  <a href="#main-content" class="skip-link">Saltar al contenido principal</a>
+  <div class="app" role="application">
     <header class="topbar" role="banner">
       <div class="brand">
-        <svg class="logo" viewBox="0 0 24 24" width="40" height="40" aria-hidden="true"><path fill="currentColor" d="M12 2L3 7v6c0 5 3.7 9.6 9 11 5.3-1.4 9-6 9-11V7l-9-5z"/></svg>
+        <svg class="logo" viewBox="0 0 24 24" width="40" height="40" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 2L3 7v6c0 5 3.7 9.6 9 11 5.3-1.4 9-6 9-11V7l-9-5z"/></svg>
         <div style="min-width:0;">
           <div class="title">WiFi Survey</div>
-          <div class="subtitle muted">Mediciones desde Termux · Mobile Pro</div>
+          <div class="subtitle muted" aria-label="Subtitle">Mediciones desde Termux · Mobile Pro</div>
         </div>
       </div>
       <div class="top-actions">
-        <div class="status online" title="Estado del sistema"></div>
-        <div class="mode-switch" role="tablist" aria-label="Modo">
-          <button id="modeQuick" class="mode-btn active" aria-pressed="true">Quick</button>
-          <button id="modeSurvey" class="mode-btn" aria-pressed="false">Encuesta</button>
-          <button id="modeResults" class="mode-btn" aria-pressed="false">Resultados</button>
-        </div>
+        <div class="status online" role="status" aria-label="Estado del sistema: en línea" title="Sistema en línea"></div>
+        <nav class="mode-switch" role="tablist" aria-label="Navegación principal">
+          <button id="modeQuick" class="mode-btn active" role="tab" aria-selected="true" aria-controls="panel-quick">Quick</button>
+          <button id="modeSurvey" class="mode-btn" role="tab" aria-selected="false" aria-controls="panel-survey">Encuesta</button>
+          <button id="modeResults" class="mode-btn" role="tab" aria-selected="false" aria-controls="panel-results">Resultados</button>
+        </nav>
       </div>
     </header>
 
-    <main class="container">
+    <main class="container" role="main" id="main-content">
       <!-- Quick -->
-      <section id="panel-quick" class="panel">
+      <section id="panel-quick" class="panel" role="tabpanel" aria-labelledby="modeQuick">
         <section class="card">
           <h2 style="margin:.1rem 0;">Medición rápida</h2>
-          <div class="muted">Ejecuta una medición puntual</div>
+          <p class="muted">Ejecuta una medición puntual</p>
 
           <div class="grid" style="margin-top:12px;">
-            <div><label for="device">Equipo (DUT / Tester)</label><input id="device" type="text" value="S24FE" placeholder="Nombre del dispositivo" /></div>
-            <div><label for="point">Punto</label><input id="point" type="text" value="P1" placeholder="ID del punto (ej: P1, A1)" /></div>
-            <div><label for="run">Repetición</label><input id="run" type="number" min="1" max="100" value="1" /></div>
+            <div><label for="device">Equipo (DUT / Tester)</label><input id="device" type="text" value="S24FE" placeholder="Nombre del dispositivo" aria-required="true" /></div>
+            <div><label for="point">Punto</label><input id="point" type="text" value="P1" placeholder="ID del punto (ej: P1, A1)" aria-required="true" /></div>
+            <div><label for="run">Repetición</label><input id="run" type="number" min="1" max="100" value="1" aria-required="true" aria-describedby="run-hint" /><small id="run-hint" class="muted" style="display:none;">Entre 1 y 100</small></div>
             <div style="grid-column:1 / -1; display:flex; gap:8px; margin-top:6px; flex-wrap:wrap;">
-              <button id="runBtn" class="btn primary">▶ Ejecutar prueba</button>
-              <button id="downloadBtn" class="btn outline">📥 CSV</button>
-              <button id="showLiveQuick" class="btn outline" style="margin-left:auto;">📊 Mostrar panel en vivo</button>
+              <button id="runBtn" class="btn primary" aria-label="Ejecutar prueba de medición">▶ Ejecutar prueba</button>
+              <button id="downloadBtn" class="btn outline" aria-label="Descargar resultados en formato CSV">📥 CSV</button>
+              <button id="showLiveQuick" class="btn outline" style="margin-left:auto;" aria-label="Mostrar panel de visualización en vivo">📊 Mostrar panel en vivo</button>
             </div>
-            <div id="quickStatus" class="muted" style="grid-column:1 / -1; margin-top:4px; min-height:20px;"></div>
+            <div id="quickStatus" class="muted" role="status" aria-live="polite" style="grid-column:1 / -1; margin-top:4px; min-height:20px;"></div>
           </div>
         </section>
       </section>
 
       <!-- Survey -->
-      <section id="panel-survey" class="panel hidden">
+      <section id="panel-survey" class="panel hidden" role="tabpanel" aria-labelledby="modeSurvey">
         <section class="card">
           <h2 style="margin:.1rem 0;">Encuesta</h2>
-          <div class="muted">Automatiza varias mediciones</div>
+          <p class="muted">Automatiza varias mediciones</p>
 
           <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
-            <div><label for="survey_device">Nombre del equipo</label><input id="survey_device" type="text" value="S24FE" placeholder="Identificador del dispositivo" /></div>
-            <div><label for="points">Puntos (espacios o comas)</label><textarea id="points" rows="3" placeholder="A1 A2 A3 o A1, A2, A3"></textarea></div>
+            <div><label for="survey_device">Nombre del equipo</label><input id="survey_device" type="text" value="S24FE" placeholder="Identificador del dispositivo" aria-required="true" /></div>
+            <div><label for="points">Puntos (espacios o comas)</label><textarea id="points" rows="3" placeholder="A1 A2 A3 o A1, A2, A3" aria-required="true" aria-describedby="points-hint"></textarea><small id="points-hint" class="muted">Ingresa los puntos separados por espacios o comas</small></div>
 
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-              <div style="min-width:160px;"><label for="repeats">Repeticiones por punto</label><input id="repeats" type="number" min="1" max="100" value="1" /></div>
-              <label style="display:inline-flex;align-items:center;gap:8px;"><input id="manual_confirm" type="checkbox" checked /> <span class="muted">Pedir confirmación en cada punto</span></label>
+              <div style="min-width:160px;"><label for="repeats">Repeticiones por punto</label><input id="repeats" type="number" min="1" max="100" value="1" aria-required="true" /></div>
+              <label style="display:inline-flex;align-items:center;gap:8px;"><input id="manual_confirm" type="checkbox" checked aria-label="Pedir confirmación manual en cada punto" /> <span class="muted">Pedir confirmación en cada punto</span></label>
               <div style="margin-left:auto; display:flex; gap:8px;">
-                <button id="startSurvey" class="btn primary">▶ Iniciar encuesta</button>
-                <button id="cancelTask" class="btn outline" disabled>⏹ Cancelar</button>
-                <button id="showLiveSurvey" class="btn outline">📊 Mostrar panel</button>
+                <button id="startSurvey" class="btn primary" aria-label="Iniciar encuesta de mediciones">▶ Iniciar encuesta</button>
+                <button id="cancelTask" class="btn outline" disabled aria-label="Cancelar tarea en curso">⏹ Cancelar</button>
+                <button id="showLiveSurvey" class="btn outline" aria-label="Mostrar panel de visualización">📊 Mostrar panel</button>
               </div>
             </div>
-            <div id="surveyStatusMsg" class="muted" style="min-height:20px;"></div>
+            <div id="surveyStatusMsg" class="muted" role="status" aria-live="polite" style="min-height:20px;"></div>
 
             <div id="surveyArea" class="survey-area" hidden>
               <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-                <div id="surveyStatus" class="muted">Sin tarea</div>
-                <progress id="progressBar" value="0" max="100" style="flex:1; min-width:160px;"></progress>
-                <div id="progressPctSmall" style="width:60px;text-align:right;">0%</div>
+                <div id="surveyStatus" class="muted" role="status">Sin tarea</div>
+                <progress id="progressBar" value="0" max="100" style="flex:1; min-width:160px;" aria-label="Progreso de la encuesta"></progress>
+                <div id="progressPctSmall" style="width:60px;text-align:right;" aria-live="polite">0%</div>
               </div>
-              <div id="surveyLog" class="log">Logs</div>
+              <div id="surveyLog" class="log" role="log" aria-label="Registro de actividad">Logs</div>
               <div style="display:flex;gap:8px; align-items:center;">
-                <button id="proceedBtn" class="btn primary" hidden>Continuar</button>
+                <button id="proceedBtn" class="btn primary" hidden aria-label="Continuar con el siguiente punto">Continuar</button>
                 <div style="margin-left:auto" class="muted">Última tarea: <span id="lastSurveyId">—</span></div>
               </div>
             </div>
@@ -189,115 +772,115 @@
       </section>
 
       <!-- Live visuals (solo gráficas) -->
-      <section id="liveVisuals" class="card" aria-live="polite">
+      <section id="liveVisuals" class="card" role="region" aria-live="polite" aria-label="Panel de visualización en vivo">
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <strong>Panel en ejecución</strong>
-          <button id="hideLivePanel" class="btn outline">Ocultar</button>
+          <button id="hideLivePanel" class="btn outline" aria-label="Ocultar panel de visualización">Ocultar</button>
         </div>
 
         <div style="flex:1; display:flex; flex-direction:column; gap:10px; min-width:260px; width:100%;">
           <div class="card chart-card">
             <strong>Progreso de prueba</strong>
             <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:4px;">
-              <small class="muted" id="testConfig">Configuración cargando...</small>
-              <div id="timeRemaining">00:00</div>
+              <small class="muted" id="testConfig" aria-label="Configuración de prueba">Configuración cargando...</small>
+              <div id="timeRemaining" aria-label="Tiempo restante">00:00</div>
             </div>
             <div class="progress-row" style="margin-top:8px;">
-              <div class="progress-bar" style="flex:1"><div class="fill" id="runProgressFill"></div></div>
-              <div style="width:110px; text-align:right;"><small id="progressPct">0%</small></div>
+              <div class="progress-bar" style="flex:1" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="fill" id="runProgressFill"></div></div>
+              <div style="width:110px; text-align:right;"><small id="progressPct" aria-live="polite">0%</small></div>
             </div>
-            <div class="live-stats" id="liveSummary">Esperando ejecución...</div>
+            <div class="live-stats" id="liveSummary" aria-live="polite">Esperando ejecución...</div>
           </div>
 
           <div class="card chart-card">
             <strong>Lectura instantánea</strong>
-            <div style="display:flex; gap:12px; margin-top:8px; flex-wrap:wrap;">
-              <div style="min-width:86px"><small class="muted">DL</small><div id="instDl" style="font-weight:700">— Mbps</div></div>
-              <div style="min-width:86px"><small class="muted">UL</small><div id="instUl" style="font-weight:700">— Mbps</div></div>
-              <div style="min-width:86px"><small class="muted">Ping avg</small><div id="instPing" style="font-weight:700">— ms</div></div>
-              <div style="min-width:86px"><small class="muted">Ping p50</small><div id="instPing50" style="font-weight:700">— ms</div></div>
-              <div style="min-width:86px"><small class="muted">Ping p95</small><div id="instPing95" style="font-weight:700">— ms</div></div>
-              <div style="min-width:86px"><small class="muted">Loss</small><div id="instLoss" style="font-weight:700">— %</div></div>
+            <div style="display:flex; gap:12px; margin-top:8px; flex-wrap:wrap;" role="group" aria-label="Métricas en tiempo real">
+              <div style="min-width:86px"><small class="muted">DL</small><div id="instDl" aria-label="Velocidad de descarga">— Mbps</div></div>
+              <div style="min-width:86px"><small class="muted">UL</small><div id="instUl" aria-label="Velocidad de subida">— Mbps</div></div>
+              <div style="min-width:86px"><small class="muted">Ping avg</small><div id="instPing" aria-label="Ping promedio">— ms</div></div>
+              <div style="min-width:86px"><small class="muted">Ping p50</small><div id="instPing50" aria-label="Ping percentil 50">— ms</div></div>
+              <div style="min-width:86px"><small class="muted">Ping p95</small><div id="instPing95" aria-label="Ping percentil 95">— ms</div></div>
+              <div style="min-width:86px"><small class="muted">Loss</small><div id="instLoss" aria-label="Pérdida de paquetes">— %</div></div>
             </div>
           </div>
 
           <div class="card chart-card">
             <strong>Estabilidad (en vivo)</strong>
-            <div class="muted" style="font-size:.85rem">DL / UL / Ping durante esta prueba</div>
+            <p class="muted" style="font-size:.85rem;margin-top:4px;">DL / UL / Ping durante esta prueba</p>
             <div id="liveMiniChartWrap">
-              <div id="liveMiniChart" aria-label="Gráfica en vivo"></div>
+              <div id="liveMiniChart" role="img" aria-label="Gráfica en vivo de métricas de red"></div>
             </div>
           </div>
         </div>
       </section>
 
       <!-- Results -->
-      <section id="panel-results" class="panel hidden">
+      <section id="panel-results" class="panel hidden" role="tabpanel" aria-labelledby="modeResults">
         <div class="results-grid">
           <section class="card results-chart" id="resultsChartCard">
             <div class="results-toolbar">
               <div class="toolbar-flex">
                 <div>
                   <strong>Gráfico de resultados</strong>
-                  <div class="muted" style="font-size:.88rem">DL / UL / Ping por punto</div>
+                  <p class="muted" style="font-size:.88rem;margin-top:2px;">DL / UL / Ping por punto</p>
                 </div>
                 <div class="toolbar-right">
-                  <label><input type="checkbox" id="toggleDL" checked> DL</label>
-                  <label><input type="checkbox" id="toggleUL" checked> UL</label>
-                  <label><input type="checkbox" id="togglePing" checked> Ping</label>
-                  <select id="sortResultsSelect" class="btn outline" style="min-width:150px">
+                  <label><input type="checkbox" id="toggleDL" checked aria-label="Mostrar Download"> DL</label>
+                  <label><input type="checkbox" id="toggleUL" checked aria-label="Mostrar Upload"> UL</label>
+                  <label><input type="checkbox" id="togglePing" checked aria-label="Mostrar Ping"> Ping</label>
+                  <select id="sortResultsSelect" class="btn outline" style="min-width:150px" aria-label="Ordenar resultados">
                     <option value="newest">Más recientes</option>
                     <option value="oldest">Más antiguos</option>
                     <option value="dl-desc">DL desc</option>
                     <option value="dl-asc">DL asc</option>
                   </select>
                   <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">
-                    <input type="checkbox" id="autoRefresh" /> Auto-actualizar
+                    <input type="checkbox" id="autoRefresh" aria-label="Activar actualización automática" /> Auto-actualizar
                   </label>
-                  <button id="refreshChartBtn" class="btn outline">Actualizar</button>
+                  <button id="refreshChartBtn" class="btn outline" aria-label="Actualizar gráfico manualmente">Actualizar</button>
                 </div>
               </div>
             </div>
             <div id="resultsChartWrap">
-              <div id="throughputChart" aria-label="Gráfico de resultados"></div>
+              <div id="throughputChart" role="img" aria-label="Gráfico de resultados de throughput"></div>
             </div>
           </section>
 
           <section class="card results-content">
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
               <div>
                 <h3 style="margin:.1rem 0;">Resultados recientes</h3>
-                <div class="muted">Últimas mediciones</div>
+                <p class="muted" style="margin-top:2px;">Últimas mediciones</p>
               </div>
               <div style="display:flex;gap:8px; align-items:center; flex-wrap:wrap;">
-                <input id="searchInput" placeholder="Buscar por punto, SSID o device" style="flex:1; max-width:420px; min-width:200px;" />
-                <button id="btn-go-to-tests" class="btn outline">Pruebas</button>
-                <button id="btn-go-to-survey" class="btn outline">Encuesta</button>
+                <input id="searchInput" placeholder="Buscar por punto, SSID o device" style="flex:1; max-width:420px; min-width:200px;" aria-label="Buscar en resultados" />
+                <button id="btn-go-to-tests" class="btn outline" aria-label="Ir a sección de pruebas">Pruebas</button>
+                <button id="btn-go-to-survey" class="btn outline" aria-label="Ir a sección de encuesta">Encuesta</button>
               </div>
             </div>
 
             <div class="results-content-grid" style="margin-top:8px;">
               <div>
-                <div id="resultsList"></div>
-                <div id="emptyState" class="muted" style="display:none; padding:8px 4px;">Aún no hay resultados. Ejecuta una medición para ver datos aquí.</div>
+                <div id="resultsList" role="list" aria-label="Lista de resultados"></div>
+                <div id="emptyState" class="muted" style="display:none; padding:8px 4px;" role="status">Aún no hay resultados. Ejecuta una medición para ver datos aquí.</div>
               </div>
 
               <div class="summary-card card">
                 <h4>Resumen</h4>
-                <div style="display:grid; gap:8px; margin-top:8px;">
-                  <div><div class="big" id="avgRssi">—</div><div class="muted">RSSI med</div></div>
-                  <div><div class="big" id="avgDl">—</div><div class="muted">DL avg</div></div>
-                  <div><div class="big" id="avgUl">—</div><div class="muted">UL avg</div></div>
-                  <div><div class="big" id="avgPing">—</div><div class="muted">Ping avg ms</div></div>
-                  <div><div class="big" id="totalTests">0</div><div class="muted">Total pruebas</div></div>
+                <div style="display:grid; gap:8px; margin-top:8px;" role="group" aria-label="Estadísticas de resumen">
+                  <div><div class="big" id="avgRssi" aria-label="RSSI medio">—</div><div class="muted">RSSI med</div></div>
+                  <div><div class="big" id="avgDl" aria-label="Download promedio">—</div><div class="muted">DL avg</div></div>
+                  <div><div class="big" id="avgUl" aria-label="Upload promedio">—</div><div class="muted">UL avg</div></div>
+                  <div><div class="big" id="avgPing" aria-label="Ping promedio">—</div><div class="muted">Ping avg ms</div></div>
+                  <div><div class="big" id="totalTests" aria-label="Total de pruebas">0</div><div class="muted">Total pruebas</div></div>
                 </div>
                 <div class="summary-actions">
-                  <button id="exportJsonBtn" class="btn">Exportar JSON</button>
-                  <button id="clearResultsBtn" class="btn outline">Limpiar</button>
-                  <button id="exportCsvWide" class="btn outline">CSV wide</button>
-                  <button id="exportCsvLong" class="btn outline">CSV long</button>
-                  <button id="exportSummaryJson" class="btn outline">Resumen JSON</button>
-                  <button id="exportSamplesCsv" class="btn outline">CSV muestras</button>
+                  <button id="exportJsonBtn" class="btn" aria-label="Exportar resultados en formato JSON">Exportar JSON</button>
+                  <button id="clearResultsBtn" class="btn outline" aria-label="Limpiar todos los resultados">Limpiar</button>
+                  <button id="exportCsvWide" class="btn outline" aria-label="Exportar CSV en formato ancho">CSV wide</button>
+                  <button id="exportCsvLong" class="btn outline" aria-label="Exportar CSV en formato largo">CSV long</button>
+                  <button id="exportSummaryJson" class="btn outline" aria-label="Exportar resumen en JSON">Resumen JSON</button>
+                  <button id="exportSamplesCsv" class="btn outline" aria-label="Exportar muestras en CSV">CSV muestras</button>
                 </div>
               </div>
             </div>
