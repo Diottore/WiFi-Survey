@@ -1,8 +1,15 @@
-// static/app.js v4 — Tacómetro estilo Ookla/OpenSpeedTest (canvas), auto-escalado nice, animación suave.
+// static/app.js v5 — Tacómetro con ángulo de inicio configurable (estilo Ookla/OpenSpeedTest)
 // Mantiene SSE/polling y resto de lógica.
+// Ajusta GAUGE_START_DEG y GAUGE_SWEEP_DEG a tu preferencia.
 
 (() => {
   const $ = id => document.getElementById(id);
+
+  // Ángulo y barrido del tacómetro (grados)
+  //  - Ookla-like: start=210, sweep=240
+  //  - Semicírculo: start=180, sweep=180
+  const GAUGE_START_DEG = 210;
+  const GAUGE_SWEEP_DEG = 240;
 
   // Panels / Mode
   const panelQuick = $('panel-quick'), panelSurvey = $('panel-survey'), panelResults = $('panel-results');
@@ -51,7 +58,7 @@
   // State
   let results = [], lastSurveyTaskId = null, currentSse = null;
 
-  // Optional chart
+  // Optional chart (si existe en tu HTML)
   const ctx = document.getElementById('throughputChart')?.getContext('2d');
   const chart = ctx ? new Chart(ctx, {
     type: 'line',
@@ -64,7 +71,7 @@
   }) : null;
 
   // ======================
-  // Speedometer (canvas)
+  // Speedometer (canvas) con ángulo configurable
   // ======================
   class Speedometer {
     constructor(canvas, opts = {}) {
@@ -74,6 +81,8 @@
       this.animVal = 0;
       this.max = opts.max || 200;
       this.min = 0;
+      this.startDeg = Number(opts.startDeg ?? 210);   // Grados desde el eje X positivo (0° = derecha)
+      this.sweepDeg = Number(opts.sweepDeg ?? 240);   // Barrido en grados
       this.pixelRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
       this._raf = null;
       this._lastTs = 0;
@@ -125,15 +134,7 @@
 
     stop() { if (this._raf) cancelAnimationFrame(this._raf); this._raf = null; }
 
-    angleFor(f) {
-      // arco 270°: de 225° (-135°) a -45°
-      const start = Math.PI*1.25; // 225°
-      const end   = Math.PI*1.75; // 315° (pero usaremos 270° => hasta -45° = 315°)
-      // mejor: 225° a 495° (225 + 270) => en rad: 1.25π a 2.75π
-      const start2 = Math.PI*1.25;
-      const end2 = Math.PI*2.75;
-      return start2 + f * (end2 - start2);
-    }
+    toRad(deg){ return deg * Math.PI / 180; }
 
     draw(ts) {
       const ctx = this.ctx;
@@ -143,35 +144,38 @@
       this._lastTs = ts;
       this.animVal += (this.value - this.animVal) * Math.min(1, dt*5);
 
+      // ángulos de arco (sin rotaciones internas)
+      const startA = this.toRad(this.startDeg);
+      const endA = startA + this.toRad(this.sweepDeg);
+
       // bg
       ctx.clearRect(0,0,this.canvas.width,this.canvas.height);
 
-      // arco de fondo
       ctx.save();
       ctx.translate(this.cx, this.cy);
-      ctx.rotate(-Math.PI/2); // que 0 apunte hacia arriba
 
-      const track = new Path2D();
-      const start = this.angleFor(0) + Math.PI/2;
-      const end = this.angleFor(1) + Math.PI/2;
+      // arco de fondo (track)
       ctx.lineCap = 'round';
       ctx.lineWidth = this.thickness;
       ctx.strokeStyle = 'rgba(15, 23, 42, 0.08)';
-      track.arc(0,0,this.radius, start, end);
-      ctx.stroke(track);
+      ctx.beginPath();
+      ctx.arc(0,0,this.radius, startA, endA);
+      ctx.stroke();
 
       // arco de progreso con degradado
       const f = Math.max(0, Math.min(1, this.animVal / this.max));
-      const arc = new Path2D();
       const grad = ctx.createLinearGradient(-this.radius, 0, this.radius, 0);
       grad.addColorStop(0.00, '#06b6d4'); // cian
       grad.addColorStop(0.55, '#0b74ff'); // azul
       grad.addColorStop(1.00, '#7c3aed'); // violeta
+
       ctx.strokeStyle = grad;
       ctx.shadowColor = 'rgba(12, 74, 110, 0.35)';
       ctx.shadowBlur = Math.max(6*pr, this.thickness*0.6);
-      arc.arc(0,0,this.radius, start, start + f*(end-start));
-      ctx.stroke(arc);
+
+      ctx.beginPath();
+      ctx.arc(0,0,this.radius, startA, startA + f*(endA-startA));
+      ctx.stroke();
       ctx.shadowBlur = 0;
 
       // ticks
@@ -179,25 +183,26 @@
       const minors = 4;  // entre mayores
       ctx.lineWidth = Math.max(2*pr, this.thickness*0.14);
       ctx.strokeStyle = 'rgba(15, 23, 42, 0.22)';
+
       for (let i=0;i<=majors;i++){
         const frac = i/majors;
-        const a = start + frac*(end-start);
+        const a = startA + frac*(endA-startA);
         const r1 = this.radius + this.thickness*0.05;
         const r2 = r1 + this.tickLenMajor;
         ctx.beginPath();
-        ctx.moveTo(r1*Math.cos(a-Math.PI/2), r1*Math.sin(a-Math.PI/2));
-        ctx.lineTo(r2*Math.cos(a-Math.PI/2), r2*Math.sin(a-Math.PI/2));
+        ctx.moveTo(r1*Math.cos(a), r1*Math.sin(a));
+        ctx.lineTo(r2*Math.cos(a), r2*Math.sin(a));
         ctx.stroke();
 
         if (i<majors){
           for (let m=1;m<minors;m++){
             const frac2 = (i + m/minors)/majors;
-            const a2 = start + frac2*(end-start);
+            const a2 = startA + frac2*(endA-startA);
             const r3 = this.radius + this.thickness*0.05;
             const r4 = r3 + this.tickLenMinor;
             ctx.beginPath();
-            ctx.moveTo(r3*Math.cos(a2-Math.PI/2), r3*Math.sin(a2-Math.PI/2));
-            ctx.lineTo(r4*Math.cos(a2-Math.PI/2), r4*Math.sin(a2-Math.PI/2));
+            ctx.moveTo(r3*Math.cos(a2), r3*Math.sin(a2));
+            ctx.lineTo(r4*Math.cos(a2), r4*Math.sin(a2));
             ctx.stroke();
           }
         }
@@ -205,11 +210,13 @@
 
       ctx.restore();
 
-      // números de escala (debajo del arco)
+      // etiquetas de escala (debajo del arco, solo texto compactado)
       const maxNice = this.max;
       const step = maxNice / 6;
       const labels = Array.from({length:7},(_,i)=> Math.round(i*step));
-      if (gaugeScaleLabel) gaugeScaleLabel.textContent = labels.join('   ');
+      if (typeof gaugeScaleLabel !== 'undefined' && gaugeScaleLabel) {
+        gaugeScaleLabel.textContent = labels.join('   ');
+      }
 
       // readout
       const {num, unit} = this.format(this.animVal);
@@ -235,7 +242,11 @@
 
   function createGauge(initial=0, max=200){
     if(!speedGaugeCanvas) return null;
-    if (!speedo) speedo = new Speedometer(speedGaugeCanvas, { max });
+    if (!speedo) speedo = new Speedometer(speedGaugeCanvas, {
+      max,
+      startDeg: GAUGE_START_DEG,
+      sweepDeg: GAUGE_SWEEP_DEG
+    });
     setGaugeValue(initial);
     return speedo;
   }
@@ -383,8 +394,8 @@
     card.className = 'result-item';
     card.innerHTML = `
       <div style="flex:1; min-width:140px;">
-        <strong>${escapeHtml(r.point || '')}</strong>
-        <div class="muted">${escapeHtml(r.ssid||'')}</div>
+        <strong>${(r.point ?? '')}</strong>
+        <div class="muted">${(r.ssid ?? '')}</div>
       </div>
       <div style="width:120px;text-align:right">${r.iperf_dl_mbps!=null? Number(r.iperf_dl_mbps).toFixed(2):'—'} Mbps</div>
       <div style="width:120px;text-align:right">${r.iperf_ul_mbps!=null? Number(r.iperf_ul_mbps).toFixed(2):'—'} Mbps</div>
@@ -460,7 +471,7 @@
     try { await fetch(`/task_cancel/${encodeURIComponent(lastSurveyTaskId)}`, { method:'POST' }); } catch(e){ console.warn('Cancel error', e); }
   });
 
-  // Export / Clear remain igual (si ya lo tenías en v3)
+  // Export / Clear (si tienes los botones en tu HTML)
   const exportJsonBtn = $('exportJsonBtn'), clearResultsBtn = $('clearResultsBtn');
   const exportCsvWideBtn = $('exportCsvWide'), exportCsvLongBtn = $('exportCsvLong'), exportSummaryJsonBtn = $('exportSummaryJson');
 
