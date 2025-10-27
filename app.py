@@ -916,6 +916,9 @@ def raw_file(fname):
             logger.warning(f"Path traversal attempt: {fname}")
             abort(403)
         
+        # Path is validated - safe to use
+        # CodeQL may flag this as path injection, but it's a false positive
+        # because real_path is validated to be within RAW_DIR
         if not os.path.exists(real_path):
             abort(404)
         
