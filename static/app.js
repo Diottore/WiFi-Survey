@@ -1,5 +1,5 @@
-// static/app.js - UI con SSE para recibir updates parciales (gauge, progreso, lista de resultados)
-// Asegúrate de reemplazar el archivo existente por este para que la encuesta vuelva a funcionar.
+// static/app.js - Mejoras UI: live visuals ocultos por defecto, se muestran solo al iniciar Run / StartSurvey.
+// Contiene SSE handling, gauge init/updates y control de visibilidad.
 
 (() => {
   const $ = id => document.getElementById(id);
@@ -13,7 +13,6 @@
       t.classList.toggle('active', target === panelId);
       t.setAttribute('aria-selected', target === panelId);
     });
-    const fab = $('fabRun'); if (fab) fab.style.display = panelId === 'panel-tests' ? 'inline-flex' : 'none';
   }
   tabs.forEach(t => t.addEventListener('click', () => showPanel(t.getAttribute('data-target'))));
   $('btn-go-to-tests')?.addEventListener('click', () => showPanel('panel-tests'));
@@ -33,7 +32,8 @@
   const toggleDL = $('toggleDL'), toggleUL = $('toggleUL'), togglePing = $('togglePing');
   const searchInput = $('searchInput'), autoscrollToggle = $('autoscrollToggle');
 
-  // Live UI elements
+  // Live UI elements (may be hidden initially)
+  const liveVisuals = $('liveVisuals');
   const speedGaugeCanvas = document.getElementById('speedGauge');
   const gaugeLabel = document.getElementById('gaugeLabel');
   const runProgressFill = document.getElementById('runProgressFill');
@@ -45,8 +45,10 @@
   // State
   let results = [], filteredResults = [], gaugeChart = null;
   let lastSurveyTaskId = null;
+  let currentSse = null;
+  let hideAfterFinishedTimer = null;
 
-  // Throughput chart
+  // Chart (throughput) - if present
   const ctx = document.getElementById('throughputChart')?.getContext('2d');
   const chart = ctx ? new Chart(ctx, {
     type: 'line',
@@ -63,10 +65,10 @@
     }
   }) : null;
 
-  // Gauge (doughnut + needle plugin)
+  // Gauge creation (doughnut + needle plugin)
   function createGauge(initial = 0, max = 200) {
     if(!speedGaugeCanvas) return null;
-    if(gaugeChart) gaugeChart.destroy();
+    try { if(gaugeChart) gaugeChart.destroy(); } catch(e){}
     const gctx = speedGaugeCanvas.getContext('2d');
     const data = { labels: ['val','rest'], datasets:[{ data: [initial, Math.max(0, max-initial)], backgroundColor:['#0b74ff','#e6e9ee'], borderWidth:0 }]};
     const pluginNeedle = {
@@ -91,7 +93,7 @@
     };
     Chart.register(pluginNeedle);
     gaugeChart = new Chart(gctx, { type:'doughnut', data, options: { rotation:-Math.PI, circumference:Math.PI, cutout:'60%', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}, tooltip:{enabled:false}}, maxValue: max }, plugins:[pluginNeedle] });
-    gaugeLabel.textContent = `${initial.toFixed(2)} Mbps`;
+    gaugeLabel && (gaugeLabel.textContent = `${initial.toFixed(2)} Mbps`);
     return gaugeChart;
   }
 
@@ -100,45 +102,78 @@
     gaugeChart.data.datasets[0].data[0] = Math.max(0, Math.min(v, max));
     gaugeChart.data.datasets[0].data[1] = Math.max(0, max - gaugeChart.data.datasets[0].data[0]);
     gaugeChart.options.maxValue = max;
-    gaugeChart.update('none');
-    gaugeLabel.textContent = `${Number(gaugeChart.data.datasets[0].data[0]).toFixed(2)} Mbps`;
+    try { gaugeChart.update('none'); } catch(e){}
+    gaugeLabel && (gaugeLabel.textContent = `${Number(gaugeChart.data.datasets[0].data[0]).toFixed(2)} Mbps`);
   }
 
-  function fmtTime(s) {
-    s = Math.max(0, Math.round(s));
-    const mm = String(Math.floor(s/60)).padStart(2,'0');
-    const ss = String(s % 60).padStart(2,'0');
-    return `${mm}:${ss}`;
+  // Show / hide live visuals (gauge + progress). Initializes gauge lazily.
+  function showLiveVisuals(show) {
+    if(!liveVisuals) return;
+    if(show) {
+      liveVisuals.classList.remove('hidden');
+      // ensure gauge exists
+      if(!gaugeChart) createGauge(0, 200);
+    } else {
+      liveVisuals.classList.add('hidden');
+      // reset values visually
+      runProgressFill && (runProgressFill.style.width = '0%');
+      progressPct && (progressPct.textContent = '0%');
+      timeRemainingEl && (timeRemainingEl.textContent = '00:00');
+      liveSummary && (liveSummary.textContent = 'Esperando ejecución...');
+      instDlEl && (instDlEl.textContent = '— Mbps');
+      instUlEl && (instUlEl.textContent = '— Mbps');
+      instPingEl && (instPingEl.textContent = '— ms');
+      // optionally destroy gauge to free resources
+      try { if(gaugeChart){ gaugeChart.destroy(); gaugeChart = null; } } catch(e){}
+    }
   }
 
-  // SSE handling
+  // Helpers: format time remaining
+  function fmtTime(s) { s = Math.max(0, Math.round(s)); const mm = String(Math.floor(s/60)).padStart(2,'0'); const ss = String(s % 60).padStart(2,'0'); return `${mm}:${ss}`; }
+
+  // SSE + polling helpers (same as before)
   function openSseForTask(task_id) {
+    if(!task_id) return;
+    // close previous
+    if(currentSse && typeof currentSse.close === 'function') { try{ currentSse.close(); }catch(e){} currentSse = null; }
     if(typeof(EventSource) === 'undefined') {
       return pollTaskStatus(task_id, 1000);
     }
     const es = new EventSource(`/stream/${encodeURIComponent(task_id)}`);
+    currentSse = es;
     es.addEventListener('open', () => { console.debug('SSE open for', task_id); });
-    es.addEventListener('error', (e) => { console.warn('SSE error', e); es.close(); pollTaskStatus(task_id, 1000); });
+    es.addEventListener('error', (e) => { console.warn('SSE error', e); /* fallback */ });
     es.addEventListener('update', (ev) => {
-      try { const data = JSON.parse(ev.data); handlePartialUpdate(data); } catch(e) { console.error('parse sse update', e); }
+      try {
+        const data = JSON.parse(ev.data);
+        // show visuals when first update arrives
+        showLiveVisuals(true);
+        handlePartialUpdate(data);
+      } catch(e) { console.error('parse sse update', e); }
     });
     es.addEventListener('finished', (ev) => {
-      try { const final = JSON.parse(ev.data || 'null'); handleFinalResult(final); } catch(e){ console.error('parse finished', e); }
-      es.close();
+      try {
+        const final = JSON.parse(ev.data || 'null');
+        handleFinalResult(final);
+      } catch(e){ console.error('parse finished', e); }
+      // keep visuals visible a short time, then hide (UX: user can still view results)
+      if(hideAfterFinishedTimer) clearTimeout(hideAfterFinishedTimer);
+      hideAfterFinishedTimer = setTimeout(()=>{ showLiveVisuals(false); }, 10_000);
+      try{ es.close(); }catch(e){}
     });
     return es;
   }
 
-  // Polling fallback
+  // Polling fallback (used rarely)
   let pollIntervalHandle = null;
   function pollTaskStatus(task_id, ms=1000) {
     if(pollIntervalHandle) clearInterval(pollIntervalHandle);
     pollIntervalHandle = setInterval(async ()=>{
       try {
         const res = await fetch(`/task_status/${task_id}`);
-        if(!res.ok) { return; }
+        if(!res.ok) return;
         const js = await res.json();
-        if(js.partial) handlePartialUpdate(js);
+        if(js.partial) { showLiveVisuals(true); handlePartialUpdate(js); }
         if(js.status === 'finished') { handleFinalResult(js.result || js.results || {}); clearInterval(pollIntervalHandle); pollIntervalHandle = null; }
       } catch(e) { console.warn('poll error', e); }
     }, ms);
@@ -153,40 +188,41 @@
     const progress = partial.progress_pct || partial.progress || 0;
     const elapsed = partial.elapsed_s || 0;
     setGaugeValue(dl, 200);
-    instDlEl.textContent = `${dl.toFixed(2)} Mbps`;
-    instUlEl.textContent = `${ul.toFixed(2)} Mbps`;
-    instPingEl.textContent = `${ping !== '' && !isNaN(Number(ping)) ? Number(ping).toFixed(2)+' ms' : '—'}`;
-    runProgressFill.style.width = `${progress}%`;
-    progressPct.textContent = `${progress}%`;
+    instDlEl && (instDlEl.textContent = `${dl.toFixed(2)} Mbps`);
+    instUlEl && (instUlEl.textContent = `${ul.toFixed(2)} Mbps`);
+    instPingEl && (instPingEl.textContent = `${ping !== '' && !isNaN(Number(ping)) ? Number(ping).toFixed(2)+' ms' : '—'}`);
+    runProgressFill && (runProgressFill.style.width = `${progress}%`);
+    progressPct && (progressPct.textContent = `${progress}%`);
+    // time remaining using config if available
     (async ()=>{
       try {
         const cfg = await fetch('/_survey_config').then(r=>r.ok? r.json(): null);
         if(cfg && cfg.IPERF_DURATION) {
           const remaining = Math.max(0, cfg.IPERF_DURATION - (elapsed || 0));
-          timeRemainingEl.textContent = fmtTime(remaining);
+          timeRemainingEl && (timeRemainingEl.textContent = fmtTime(remaining));
         } else {
-          timeRemainingEl.textContent = fmtTime(Math.max(0, (partial.duration || 20) - (elapsed || 0)));
+          timeRemainingEl && (timeRemainingEl.textContent = fmtTime(Math.max(0, (partial.duration || 20) - (elapsed || 0))));
         }
       } catch(e){}
     })();
-    liveSummary.textContent = `Ejecutando... ${progress}%`;
+    liveSummary && (liveSummary.textContent = `Ejecutando... ${progress}%`);
   }
 
   function handleFinalResult(res) {
-    if(!res) { liveSummary.textContent = 'Prueba finalizada (sin resultado)'; return; }
+    if(!res) { liveSummary && (liveSummary.textContent = 'Prueba finalizada (sin resultado)'); return; }
     if(Array.isArray(res)) {
-      // survey finished, append each
       res.forEach(r => pushResultToList(r));
-      liveSummary.textContent = `Encuesta finalizada: ${res.length} puntos`;
+      liveSummary && (liveSummary.textContent = `Encuesta finalizada: ${res.length} puntos`);
     } else {
       const dl = Number(res.iperf_dl_mbps || 0), ul = Number(res.iperf_ul_mbps || 0);
       const start = gaugeChart ? gaugeChart.data.datasets[0].data[0] : 0;
       const target = Math.min(400, dl);
       const steps = 20; let i = 0;
       const stepInterval = setInterval(()=>{ i++; const t = i/steps; const value = start + (target - start) * (1 - Math.cos(Math.PI*t))/2; setGaugeValue(value, Math.max(200, target)); if(i>=steps) clearInterval(stepInterval); }, 25);
-      instDlEl.textContent = `${dl.toFixed(2)} Mbps`; instUlEl.textContent = `${ul.toFixed(2)} Mbps`;
-      instPingEl.textContent = `${res.ping_avg_ms || res.ping_avg || '—'}`;
-      liveSummary.textContent = `Resultado final: DL ${dl.toFixed(2)} Mbps · UL ${ul.toFixed(2)} Mbps`;
+      instDlEl && (instDlEl.textContent = `${dl.toFixed(2)} Mbps`);
+      instUlEl && (instUlEl.textContent = `${ul.toFixed(2)} Mbps`);
+      instPingEl && (instPingEl.textContent = `${res.ping_avg_ms || res.ping_avg || '—'}`);
+      liveSummary && (liveSummary.textContent = `Resultado final: DL ${dl.toFixed(2)} Mbps · UL ${ul.toFixed(2)} Mbps`);
       const r = {
         device: res.device || deviceEl.value || '',
         point: res.point || pointEl.value || '',
@@ -213,9 +249,10 @@
       }
       updateSummary();
     }
-    runProgressFill.style.width = `0%`; progressPct.textContent = `0%`; timeRemainingEl.textContent = '00:00';
+    // leave visuals visible for a while; hide after timeout handled by caller
   }
 
+  // Push a result to UI list
   function pushResultToList(r) {
     r.point = r.point || 'pt';
     results.unshift(r);
@@ -237,21 +274,23 @@
     return String(s).replace(/[&<>"']/g, function(m){ return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]; });
   }
 
-  // Run single point (uses task + SSE)
+  // Run single point (uses task + SSE). Show live visuals on start.
   runBtn.addEventListener('click', async () => {
     runBtn.disabled = true;
     const device = (deviceEl.value || 'phone').trim();
     const point = (pointEl.value || 'P1').trim();
     const runIndex = Number(runEl.value) || 1;
+    showLiveVisuals(true);
+    liveSummary && (liveSummary.textContent = 'Iniciando prueba...');
     try {
       const res = await fetch('/run_point', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ device, point, run: runIndex }) });
       const j = await res.json();
-      if(!j || !j.ok) { liveSummary.textContent = `Error iniciando prueba: ${j?.error || 'unknown'}`; runBtn.disabled = false; return; }
+      if(!j || !j.ok) { liveSummary && (liveSummary.textContent = `Error iniciando prueba: ${j?.error || 'unknown'}`); runBtn.disabled = false; return; }
       const task_id = j.task_id;
-      liveSummary.textContent = 'Tarea iniciada, esperando actualizaciones...';
+      // open SSE and stream partial updates
       openSseForTask(task_id);
     } catch(e) {
-      liveSummary.textContent = `Error comunicando con servidor: ${e.message}`;
+      liveSummary && (liveSummary.textContent = `Error comunicando con servidor: ${e.message}`);
       console.error(e);
     } finally {
       runBtn.disabled = false;
@@ -270,17 +309,21 @@
     try {
       const res = await fetch('/start_survey', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({device, points, repeats, manual}) });
       const j = await res.json();
-      if(!j.ok){ surveyLog.textContent = 'Error: ' + (j.error||''); startSurveyBtn.disabled=false; return; }
+      if(!j.ok){ surveyLog && (surveyLog.textContent = 'Error: ' + (j.error||'')); startSurveyBtn.disabled=false; return; }
       const task_id = j.task_id;
       lastSurveyTaskId = task_id;
+      $('lastSurveyId') && ( $('lastSurveyId').textContent = task_id );
       cancelTaskBtn.disabled = false;
-      // SSE will stream updates for the survey parent task
+      // show survey area and live visuals
+      surveyArea && surveyArea.classList.remove('hidden');
+      showLiveVisuals(true);
+      // open SSE for parent task (it will stream updates and finished with results[])
       openSseForTask(task_id);
       showPanel('panel-results');
-    } catch(e){ surveyLog.textContent = 'Error al iniciar: '+e; startSurveyBtn.disabled=false; }
+    } catch(e){ surveyLog && (surveyLog.textContent = 'Error al iniciar: '+e); startSurveyBtn.disabled=false; }
   });
 
-  // Proceed / Cancel for surveys using lastSurveyTaskId (no prompt)
+  // Proceed / Cancel for surveys using lastSurveyTaskId
   proceedBtn && proceedBtn.addEventListener('click', async ()=>{
     if(!lastSurveyTaskId){ alert('No hay encuesta en curso'); return; }
     proceedBtn.disabled = true;
@@ -296,7 +339,7 @@
     if(!lastSurveyTaskId){ alert('No hay encuesta en curso'); return; }
     try {
       await fetch(`/task_cancel/${encodeURIComponent(lastSurveyTaskId)}`, { method:'POST' });
-      // UI will receive cancelled status via SSE
+      // UI updates will arrive via SSE
     } catch(e){ console.warn('Cancel error', e); }
   });
 
@@ -315,23 +358,22 @@
     const dlVals = results.map(x=>Number(x.iperf_dl_mbps)).filter(n=>!isNaN(n));
     const ulVals = results.map(x=>Number(x.iperf_ul_mbps)).filter(n=>!isNaN(n));
     const pingVals = results.map(x=>Number(x.ping_avg)).filter(n=>!isNaN(n));
-    const jitterVals = results.map(x=>Number(x.ping_jitter)).filter(n=>!isNaN(n));
     const avg = arr => arr.length ? (arr.reduce((a,b)=>a+b,0)/arr.length) : NaN;
-    avgRssi.textContent = rssiVals.length ? Math.round(avg(rssiVals)) + ' dBm' : '—';
-    avgDl.textContent = dlVals.length ? avg(dlVals).toFixed(2) + ' Mbps' : '—';
-    avgUl.textContent = ulVals.length ? avg(ulVals).toFixed(2) + ' Mbps' : '—';
+    avgRssi && (avgRssi.textContent = rssiVals.length ? Math.round(avg(rssiVals)) + ' dBm' : '—');
+    avgDl && (avgDl.textContent = dlVals.length ? avg(dlVals).toFixed(2) + ' Mbps' : '—');
+    avgUl && (avgUl.textContent = ulVals.length ? avg(ulVals).toFixed(2) + ' Mbps' : '—');
     avgPing && (avgPing.textContent = pingVals.length ? avg(pingVals).toFixed(2) + ' ms' : '—');
-    avgJitter && (avgJitter.textContent = jitterVals.length ? avg(jitterVals).toFixed(2) + ' ms' : '—');
   }
 
   function setStatus(ok){ statusDot.className = ok ? 'status online' : 'status offline'; }
   (async ()=>{ try { const r = await fetch('/list_raw'); setStatus(r.ok); } catch(e){ setStatus(false); } })();
 
-  // Initialize gauge and UI
-  createGauge(0, 200);
+  // Initialize: hide live visuals initially
+  showLiveVisuals(false);
   filteredResults = results.slice();
   updateSummary();
 
-  // Expose small API for debug
-  window.__ws = { pushResultToList, results, chart, createGauge, setGaugeValue, showPanel };
+  // Expose small API for debugging
+  window.__ws = Object.assign(window.__ws || {}, { createGauge, setGaugeValue, showLiveVisuals, openSseForTask });
+
 })();
