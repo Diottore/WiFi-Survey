@@ -12,10 +12,28 @@
   function setMode(mode, persist = true) {
     const map = { quick: panelQuick, survey: panelSurvey, results: panelResults };
     Object.entries(map).forEach(([k,v]) => v && v.classList.toggle('hidden', k !== mode));
-    [modeQuickBtn, modeSurveyBtn, modeResultsBtn].forEach(b => b && b.classList.remove('active'));
-    if (mode === 'quick' && modeQuickBtn) modeQuickBtn.classList.add('active');
-    if (mode === 'survey' && modeSurveyBtn) modeSurveyBtn.classList.add('active');
-    if (mode === 'results' && modeResultsBtn) modeResultsBtn.classList.add('active');
+    
+    // Update tab button states and ARIA attributes
+    [modeQuickBtn, modeSurveyBtn, modeResultsBtn].forEach(b => {
+      if (b) {
+        b.classList.remove('active');
+        b.setAttribute('aria-selected', 'false');
+      }
+    });
+    
+    if (mode === 'quick' && modeQuickBtn) {
+      modeQuickBtn.classList.add('active');
+      modeQuickBtn.setAttribute('aria-selected', 'true');
+    }
+    if (mode === 'survey' && modeSurveyBtn) {
+      modeSurveyBtn.classList.add('active');
+      modeSurveyBtn.setAttribute('aria-selected', 'true');
+    }
+    if (mode === 'results' && modeResultsBtn) {
+      modeResultsBtn.classList.add('active');
+      modeResultsBtn.setAttribute('aria-selected', 'true');
+    }
+    
     if (persist) try { localStorage.setItem('uiMode', mode); } catch(e){}
     if (mode === 'results') {
       ensureResultsChart();
@@ -335,8 +353,12 @@
     instPing95El && (instPing95El.textContent = p95!=null ? `${p95.toFixed(2)} ms` : '—');
     instLossEl && (instLossEl.textContent = loss!=null ? `${loss.toFixed(2)} %` : '—');
 
-    // Progreso y tiempo restante
-    runProgressFill && (runProgressFill.style.width = `${progress}%`);
+    // Progreso y tiempo restante - Update ARIA
+    if(runProgressFill) {
+      runProgressFill.style.width = `${progress}%`;
+      const progressBar = runProgressFill.parentElement;
+      if(progressBar) progressBar.setAttribute('aria-valuenow', Math.round(progress));
+    }
     progressPct && (progressPct.textContent = `${progress}%`);
     updateRemaining(elapsed, partial);
     liveSummary && (liveSummary.textContent = `Ejecutando... ${progress}%`);
@@ -503,6 +525,7 @@
   // Run quick
   runBtn && runBtn.addEventListener('click', async ()=>{
     runBtn.disabled=true;
+    runBtn.classList.add('loading');
     quickStatusEl && (quickStatusEl.textContent = '');
     
     const device=(deviceEl?.value||'').trim();
@@ -513,19 +536,22 @@
     if(!device){ 
       quickStatusEl && (quickStatusEl.textContent = '⚠️ Por favor ingresa el nombre del dispositivo');
       quickStatusEl && (quickStatusEl.style.color = '#ef4444');
-      runBtn.disabled=false; 
+      runBtn.disabled=false;
+      runBtn.classList.remove('loading');
       return; 
     }
     if(!point){ 
       quickStatusEl && (quickStatusEl.textContent = '⚠️ Por favor ingresa el ID del punto');
       quickStatusEl && (quickStatusEl.style.color = '#ef4444');
-      runBtn.disabled=false; 
+      runBtn.disabled=false;
+      runBtn.classList.remove('loading');
       return; 
     }
     if(runIndex < 1 || runIndex > 100){
       quickStatusEl && (quickStatusEl.textContent = '⚠️ La repetición debe estar entre 1 y 100');
       quickStatusEl && (quickStatusEl.style.color = '#ef4444');
       runBtn.disabled=false;
+      runBtn.classList.remove('loading');
       return;
     }
     
@@ -540,7 +566,8 @@
         quickStatusEl && (quickStatusEl.textContent = `❌ Error: ${errorMsg}`);
         quickStatusEl && (quickStatusEl.style.color = '#ef4444');
         liveSummary && (liveSummary.textContent = `Error: ${errorMsg}`); 
-        runBtn.disabled=false; 
+        runBtn.disabled=false;
+        runBtn.classList.remove('loading');
         return; 
       }
       lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
@@ -557,13 +584,15 @@
       quickStatusEl && (quickStatusEl.style.color = '#ef4444');
       liveSummary && (liveSummary.textContent = `Error: ${e.message}`); 
     } finally{ 
-      runBtn.disabled=false; 
+      runBtn.disabled=false;
+      runBtn.classList.remove('loading');
     }
   });
 
   // Survey
   startSurveyBtn && startSurveyBtn.addEventListener('click', async ()=>{
     startSurveyBtn.disabled=true;
+    startSurveyBtn.classList.add('loading');
     surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '');
     
     const device=(surveyDeviceEl?.value||deviceEl?.value||'').trim();
@@ -576,18 +605,21 @@
       surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ Por favor ingresa el nombre del dispositivo');
       surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
       startSurveyBtn.disabled=false;
+      startSurveyBtn.classList.remove('loading');
       return;
     }
     if(!ptsRaw){ 
       surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ Por favor ingresa al menos un punto'); 
       surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
-      startSurveyBtn.disabled=false; 
+      startSurveyBtn.disabled=false;
+      startSurveyBtn.classList.remove('loading');
       return; 
     }
     if(repeats < 1 || repeats > 100){
       surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ Las repeticiones deben estar entre 1 y 100');
       surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
       startSurveyBtn.disabled=false;
+      startSurveyBtn.classList.remove('loading');
       return;
     }
     
@@ -597,6 +629,7 @@
       surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ No se detectaron puntos válidos');
       surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
       startSurveyBtn.disabled=false;
+      startSurveyBtn.classList.remove('loading');
       return;
     }
     
@@ -611,7 +644,8 @@
         surveyStatusMsgEl && (surveyStatusMsgEl.textContent = `❌ Error: ${errorMsg}`);
         surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
         surveyLog && (surveyLog.textContent='Error: ' + errorMsg); 
-        startSurveyBtn.disabled=false; 
+        startSurveyBtn.disabled=false;
+        startSurveyBtn.classList.remove('loading');
         return; 
       }
       lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
@@ -627,7 +661,8 @@
       surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
       surveyLog && (surveyLog.textContent='Error al iniciar: '+e); 
     } finally{ 
-      startSurveyBtn.disabled=false; 
+      startSurveyBtn.disabled=false;
+      startSurveyBtn.classList.remove('loading');
     }
   });
 
