@@ -1,9 +1,10 @@
-// static/app.js - UI con SSE para recibir updates parciales en tiempo real (gauge, progreso, lista de resultados)
+// static/app.js - UI con SSE para recibir updates parciales (gauge, progreso, lista de resultados)
+// Asegúrate de reemplazar el archivo existente por este para que la encuesta vuelva a funcionar.
 
 (() => {
   const $ = id => document.getElementById(id);
 
-  // Tabs and basic UI
+  // Tabs
   const tabs = Array.from(document.querySelectorAll('.tab'));
   function showPanel(panelId) {
     document.querySelectorAll('.panel').forEach(p => p.id === panelId ? p.classList.remove('hidden') : p.classList.add('hidden'));
@@ -44,7 +45,7 @@
   // State
   let results = [], filteredResults = [], gaugeChart = null;
 
-  // Throughput chart (existing)
+  // Throughput chart
   const ctx = document.getElementById('throughputChart')?.getContext('2d');
   const chart = ctx ? new Chart(ctx, {
     type: 'line',
@@ -61,7 +62,7 @@
     }
   }) : null;
 
-  // Gauge creation (doughnut + needle plugin)
+  // Gauge (doughnut + needle plugin)
   function createGauge(initial = 0, max = 200) {
     if(!speedGaugeCanvas) return null;
     if(gaugeChart) gaugeChart.destroy();
@@ -109,33 +110,19 @@
     return `${mm}:${ss}`;
   }
 
-  // SSE handling for a task_id
+  // SSE handling
   function openSseForTask(task_id) {
-    // If EventSource not supported, fallback to polling task_status
     if(typeof(EventSource) === 'undefined') {
       return pollTaskStatus(task_id, 1000);
     }
     const es = new EventSource(`/stream/${encodeURIComponent(task_id)}`);
-    es.addEventListener('open', () => {
-      console.debug('SSE open for', task_id);
-    });
-    es.addEventListener('error', (e) => {
-      console.warn('SSE error', e);
-      es.close();
-      // fallback polling
-      pollTaskStatus(task_id, 1000);
-    });
+    es.addEventListener('open', () => { console.debug('SSE open for', task_id); });
+    es.addEventListener('error', (e) => { console.warn('SSE error', e); es.close(); pollTaskStatus(task_id, 1000); });
     es.addEventListener('update', (ev) => {
-      try {
-        const data = JSON.parse(ev.data);
-        handlePartialUpdate(data);
-      } catch(e) { console.error('parse sse update', e); }
+      try { const data = JSON.parse(ev.data); handlePartialUpdate(data); } catch(e) { console.error('parse sse update', e); }
     });
     es.addEventListener('finished', (ev) => {
-      try {
-        const final = JSON.parse(ev.data || '{}');
-        handleFinalResult(final);
-      } catch(e){ console.error('parse finished', e); }
+      try { const final = JSON.parse(ev.data || 'null'); handleFinalResult(final); } catch(e){ console.error('parse finished', e); }
       es.close();
     });
     return es;
@@ -151,15 +138,12 @@
         if(!res.ok) { return; }
         const js = await res.json();
         if(js.partial) handlePartialUpdate(js);
-        if(js.status === 'finished') { handleFinalResult(js.result || {}); clearInterval(pollIntervalHandle); pollIntervalHandle = null; }
-      } catch(e) {
-        console.warn('poll error', e);
-      }
+        if(js.status === 'finished') { handleFinalResult(js.result || js.results || {}); clearInterval(pollIntervalHandle); pollIntervalHandle = null; }
+      } catch(e) { console.warn('poll error', e); }
     }, ms);
   }
 
   function handlePartialUpdate(dataContainer) {
-    // dataContainer may be {status, partial, logs} (SSE) or full task_status
     const partial = dataContainer.partial || dataContainer;
     if(!partial) return;
     const dl = Number(partial.dl_mbps || partial.iperf_dl_mbps || 0);
@@ -167,14 +151,12 @@
     const ping = partial.ping_avg_ms || partial.ping_avg || '';
     const progress = partial.progress_pct || partial.progress || 0;
     const elapsed = partial.elapsed_s || 0;
-    // update UI
     setGaugeValue(dl, 200);
     instDlEl.textContent = `${dl.toFixed(2)} Mbps`;
     instUlEl.textContent = `${ul.toFixed(2)} Mbps`;
     instPingEl.textContent = `${ping !== '' && !isNaN(Number(ping)) ? Number(ping).toFixed(2)+' ms' : '—'}`;
     runProgressFill.style.width = `${progress}%`;
     progressPct.textContent = `${progress}%`;
-    // if duration known, show time remaining; try to fetch from /_survey_config
     (async ()=>{
       try {
         const cfg = await fetch('/_survey_config').then(r=>r.ok? r.json(): null);
@@ -184,74 +166,60 @@
         } else {
           timeRemainingEl.textContent = fmtTime(Math.max(0, (partial.duration || 20) - (elapsed || 0)));
         }
-      } catch(e){ /* ignore */ }
+      } catch(e){}
     })();
     liveSummary.textContent = `Ejecutando... ${progress}%`;
   }
 
   function handleFinalResult(res) {
-    // res is the final result object saved by server
-    if(!res) {
-      liveSummary.textContent = 'Prueba finalizada (sin resultado)';
-      return;
-    }
-    const dl = Number(res.iperf_dl_mbps || 0), ul = Number(res.iperf_ul_mbps || 0);
-    // animate gauge to final
-    const start = gaugeChart ? gaugeChart.data.datasets[0].data[0] : 0;
-    const target = Math.min(400, dl);
-    const steps = 20;
-    let i = 0;
-    const stepInterval = setInterval(()=>{
-      i++;
-      const t = i/steps;
-      const value = start + (target - start) * (1 - Math.cos(Math.PI*t))/2;
-      setGaugeValue(value, Math.max(200, target));
-      if(i>=steps) clearInterval(stepInterval);
-    }, 25);
-    instDlEl.textContent = `${dl.toFixed(2)} Mbps`;
-    instUlEl.textContent = `${ul.toFixed(2)} Mbps`;
-    instPingEl.textContent = `${res.ping_avg_ms || res.ping_avg || '—'}`;
-    liveSummary.textContent = `Resultado final: DL ${dl.toFixed(2)} Mbps · UL ${ul.toFixed(2)} Mbps`;
-    // add to results list and chart
-    const r = {
-      device: res.device || deviceEl.value || '',
-      point: res.point || pointEl.value || '',
-      timestamp: res.timestamp || new Date().toISOString(),
-      ssid: res.ssid || '',
-      bssid: res.bssid || '',
-      rssi: res.rssi || '',
-      iperf_dl_mbps: dl,
-      iperf_ul_mbps: ul,
-      ping_avg: res.ping_avg_ms || res.ping_avg || '',
-      ping_jitter: res.ping_jitter_ms || res.ping_jitter || '',
-      raw_file: res.raw_file || ''
-    };
-    pushResultToList(r);
-    // update chart
-    if(chart) {
-      const label = r.point || ('pt' + Date.now());
-      chart.data.labels.unshift(label);
-      chart.data.datasets[0].data.unshift(Number(r.iperf_dl_mbps) || 0);
-      chart.data.datasets[1].data.unshift(Number(r.iperf_ul_mbps) || 0);
-      chart.data.datasets[2].data.unshift(Number(r.ping_avg) || 0);
-      const MAX_POINTS = 40;
-      if(chart.data.labels.length > MAX_POINTS){
-        chart.data.labels.pop();
-        chart.data.datasets.forEach(ds => ds.data.pop());
+    if(!res) { liveSummary.textContent = 'Prueba finalizada (sin resultado)'; return; }
+    // res may be array (survey) or object (single run)
+    if(Array.isArray(res)) {
+      // survey finished, append each
+      res.forEach(r => pushResultToList(r));
+      liveSummary.textContent = `Encuesta finalizada: ${res.length} puntos`;
+    } else {
+      const dl = Number(res.iperf_dl_mbps || 0), ul = Number(res.iperf_ul_mbps || 0);
+      const start = gaugeChart ? gaugeChart.data.datasets[0].data[0] : 0;
+      const target = Math.min(400, dl);
+      const steps = 20; let i = 0;
+      const stepInterval = setInterval(()=>{ i++; const t = i/steps; const value = start + (target - start) * (1 - Math.cos(Math.PI*t))/2; setGaugeValue(value, Math.max(200, target)); if(i>=steps) clearInterval(stepInterval); }, 25);
+      instDlEl.textContent = `${dl.toFixed(2)} Mbps`; instUlEl.textContent = `${ul.toFixed(2)} Mbps`;
+      instPingEl.textContent = `${res.ping_avg_ms || res.ping_avg || '—'}`;
+      liveSummary.textContent = `Resultado final: DL ${dl.toFixed(2)} Mbps · UL ${ul.toFixed(2)} Mbps`;
+      const r = {
+        device: res.device || deviceEl.value || '',
+        point: res.point || pointEl.value || '',
+        timestamp: res.timestamp || new Date().toISOString(),
+        ssid: res.ssid || '',
+        bssid: res.bssid || '',
+        rssi: res.rssi || '',
+        iperf_dl_mbps: dl,
+        iperf_ul_mbps: ul,
+        ping_avg: res.ping_avg_ms || res.ping_avg || '',
+        ping_jitter: res.ping_jitter_ms || res.ping_jitter || '',
+        raw_file: res.raw_file || ''
+      };
+      pushResultToList(r);
+      if(chart) {
+        const label = r.point || ('pt' + Date.now());
+        chart.data.labels.unshift(label);
+        chart.data.datasets[0].data.unshift(Number(r.iperf_dl_mbps) || 0);
+        chart.data.datasets[1].data.unshift(Number(r.iperf_ul_mbps) || 0);
+        chart.data.datasets[2].data.unshift(Number(r.ping_avg) || 0);
+        const MAX_POINTS = 40;
+        if(chart.data.labels.length > MAX_POINTS){ chart.data.labels.pop(); chart.data.datasets.forEach(ds => ds.data.pop()); }
+        chart.update('active');
       }
-      chart.update('active');
+      updateSummary();
     }
-    updateSummary();
-    // reset progress visuals
     runProgressFill.style.width = `0%`; progressPct.textContent = `0%`; timeRemainingEl.textContent = '00:00';
   }
 
-  // push result to UI list
   function pushResultToList(r) {
     r.point = r.point || 'pt';
     results.unshift(r);
     if(results.length > 300) results.pop();
-
     const card = document.createElement('div');
     card.className = 'result-item';
     card.innerHTML = `
@@ -269,25 +237,18 @@
     return String(s).replace(/[&<>"']/g, function(m){ return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]; });
   }
 
-  // Run single point using task + SSE
+  // Run single point (uses task + SSE)
   runBtn.addEventListener('click', async () => {
     runBtn.disabled = true;
     const device = (deviceEl.value || 'phone').trim();
     const point = (pointEl.value || 'P1').trim();
     const runIndex = Number(runEl.value) || 1;
-
-    // Start the task
     try {
       const res = await fetch('/run_point', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ device, point, run: runIndex }) });
       const j = await res.json();
-      if(!j || !j.ok) {
-        liveSummary.textContent = `Error iniciando prueba: ${j?.error || 'unknown'}`;
-        runBtn.disabled = false;
-        return;
-      }
+      if(!j || !j.ok) { liveSummary.textContent = `Error iniciando prueba: ${j?.error || 'unknown'}`; runBtn.disabled = false; return; }
       const task_id = j.task_id;
       liveSummary.textContent = 'Tarea iniciada, esperando actualizaciones...';
-      // Open SSE
       openSseForTask(task_id);
     } catch(e) {
       liveSummary.textContent = `Error comunicando con servidor: ${e.message}`;
@@ -297,7 +258,7 @@
     }
   });
 
-  // Survey start (reuses task-style polling SSE for multi-point survey)
+  // Start survey (multi-point)
   startSurveyBtn.addEventListener('click', async ()=>{
     startSurveyBtn.disabled = true;
     const device = (surveyDeviceEl.value || deviceEl.value || 'phone').trim();
@@ -312,29 +273,41 @@
       if(!j.ok){ surveyLog.textContent = 'Error: ' + (j.error||''); startSurveyBtn.disabled=false; return; }
       const task_id = j.task_id;
       cancelTaskBtn.disabled = false;
-      pollTaskStatus(task_id, 1500); // use polling for survey tasks (they already provide results array)
+      // For surveys we can SSE as well (stream will emit updates & finished)
+      openSseForTask(task_id);
       showPanel('panel-results');
     } catch(e){ surveyLog.textContent = 'Error al iniciar: '+e; startSurveyBtn.disabled=false; }
   });
 
-  // Cancel task endpoint
-  cancelTaskBtn.addEventListener('click', async ()=> {
-    // cancel currentTaskId if set (note: start_survey returns task_id and we set polling)
-    // For run_point tasks we do not store task_id global here; user can cancel surveys via button after starting
+  // Proceed / Cancel for surveys
+  proceedBtn && proceedBtn.addEventListener('click', async ()=>{
+    // expects the user to provide current task id (UI improvement: store last survey task id)
+    // For simplicity, prompt the task id
+    const task_id = prompt('Introduce task_id para proceder (si lo conoces):');
+    if(!task_id) return;
+    proceedBtn.disabled = true;
     try {
-      // try to cancel last polled task if present via surveyStatus content (not ideal). For robust cancel UX, you'd keep currentTaskId.
-      // We'll attempt to find a running task by reading surveyStatus text (best-effort).
-      // Recommend improving: keep currentTaskId variable set on startSurvey
-    } catch(e){ console.warn(e); }
+      const r = await fetch(`/task_proceed/${task_id}`, { method:'POST' });
+      const js = await r.json();
+      if(!js.ok) alert('Error al proceder: '+(js.error||''));
+    } catch(e){ alert('Error: '+e); }
+    proceedBtn.disabled = false;
   });
 
-  // Export results
+  cancelTaskBtn.addEventListener('click', async ()=> {
+    const task_id = prompt('Introduce task_id para cancelar (si lo conoces):');
+    if(!task_id) return;
+    try {
+      await fetch(`/task_cancel/${task_id}`, { method:'POST' });
+    } catch(e){ console.warn('Cancel error', e); }
+  });
+
+  // Export / Clear
   exportJsonBtn?.addEventListener('click', ()=>{
     const blob = new Blob([JSON.stringify(results.slice(0,200), null, 2)], {type:'application/json'});
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'wifi_recent.json'; a.click(); URL.revokeObjectURL(a.href);
   });
 
-  // Clear results
   clearResultsBtn?.addEventListener('click', ()=>{
     results = []; filteredResults = []; resultsList.innerHTML=''; if(chart){ chart.data.labels=[]; chart.data.datasets.forEach(ds=>ds.data=[]); chart.update(); } updateSummary();
   });
@@ -356,11 +329,11 @@
   function setStatus(ok){ statusDot.className = ok ? 'status online' : 'status offline'; }
   (async ()=>{ try { const r = await fetch('/list_raw'); setStatus(r.ok); } catch(e){ setStatus(false); } })();
 
-  // Initialize
+  // Initialize gauge and UI
   createGauge(0, 200);
   filteredResults = results.slice();
   updateSummary();
 
-  // Expose for debug
+  // Expose small API for dev/debug
   window.__ws = { pushResultToList, results, chart, createGauge, setGaugeValue, showPanel };
 })();

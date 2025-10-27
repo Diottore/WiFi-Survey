@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # app.py - Flask web UI mejorada para encuesta WiFi en Termux
-# Añadido: ejecución de pruebas en background y SSE para updates parciales
+# Soporta: run_point como tarea background, start_survey (encuesta multi-punto),
+# SSE stream /stream/<task_id>, y endpoints para manejar tareas.
+
 import os
 import csv
 import json
@@ -38,6 +40,7 @@ if not os.path.exists(CSV_FILE):
 tasks = {}
 tasks_lock = threading.Lock()
 
+# Helper to run shell commands
 def run_cmd(cmd, timeout=300):
     try:
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
@@ -47,8 +50,8 @@ def run_cmd(cmd, timeout=300):
     except Exception as e:
         return "", str(e), -1
 
+# Parse ping time from a ping line
 def parse_ping_times_from_output_line(line):
-    # extract time=XX.ms
     m = re.search(r'time=([\d\.]+)', line)
     if m:
         try:
@@ -59,8 +62,8 @@ def parse_ping_times_from_output_line(line):
 
 def worker_run_point(task_id, device, point, run_index, duration, parallel):
     """
-    Worker that performs ping + iperf3 (DL then UL) and writes partial updates to tasks[task_id].
-    It tries to parse interval Mbits/sec from iperf3 stdout.
+    Worker that performs ping + iperf3 (DL then UL)
+    Writes partial updates to tasks[task_id]["partial"] and final result to tasks[task_id]["result"]
     """
     with tasks_lock:
         tasks[task_id]["status"] = "running"
@@ -70,14 +73,14 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
 
     start_ts = time.time()
 
-    # Read wifi info (best-effort)
+    # Best-effort wifi info (termux)
     wifi_out, wifi_err, code = run_cmd("termux-wifi-connectioninfo")
     try:
         wifi_json = json.loads(wifi_out) if wifi_out else {}
     except:
         wifi_json = {}
 
-    # Helper to update partial
+    # partial updater
     def update_partial(dl=None, ul=None, ping_vals=None, progress=None, note=None):
         with tasks_lock:
             partial = tasks[task_id].setdefault("partial", {})
@@ -86,7 +89,6 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
             if ul is not None:
                 partial["ul_mbps"] = float(ul)
             if ping_vals is not None:
-                # ping_vals: list of sample RTTs in ms
                 times = ping_vals
                 avg = sum(times)/len(times) if times else None
                 jitter = None
@@ -102,18 +104,17 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
             if note:
                 tasks[task_id]["logs"].append(note)
 
-    # Run ping in background thread to gather RTT samples
+    # Ping worker to collect RTTs (best effort)
     ping_samples = []
     def ping_worker():
         try:
-            # use -i 1 to sample each second; -w to stop after duration+2 seconds if available
+            # use ping -c duration to sample roughly once per second
             p = subprocess.Popen(["ping", "-c", str(int(duration)), SERVER_IP], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             for line in p.stdout:
                 line = line.strip()
                 t = parse_ping_times_from_output_line(line)
                 if t is not None:
                     ping_samples.append(t)
-                    # update ping partial
                     update_partial(ping_vals=ping_samples)
             p.wait()
         except Exception as e:
@@ -123,36 +124,31 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
     ping_thread = threading.Thread(target=ping_worker, daemon=True)
     ping_thread.start()
 
-    # Run iperf3 DL (normal client: server sends data to client? typical iperf3 -c measures send from client)
-    # We'll run iperf3 in client mode and parse interval lines with Mbits/sec.
+    # DL iperf3 (client)
     dl_mbps_final = 0.0
     try:
         cmd_dl = f"iperf3 -c {SERVER_IP} -t {int(duration)} -P {int(parallel)}"
         p = subprocess.Popen(cmd_dl, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         for line in p.stdout:
             line = line.strip()
-            # try to parse a float followed by Mbits/sec
             m = re.search(r'([\d\.]+)\s+Mbits/sec', line)
             if m:
                 try:
                     val = float(m.group(1))
-                    # heuristic: assume this is latest interval bandwidth; set as dl partial
                     update_partial(dl=val)
                 except:
                     pass
-            # log any line that may be useful
             if line:
                 with tasks_lock:
                     tasks[task_id]["logs"].append(line if len(line) < 1000 else line[:1000])
         p.wait()
-        # Try final json summary (call iperf3 with --json separately to get reliable final)
-        dl_out, dl_err, code = run_cmd(f"iperf3 -c {SERVER_IP} -t {int(1)} -P {int(parallel)} --json", timeout=10)
+        # quick final sample with json (1s) to get final value if possible
+        dl_out, dl_err, code = run_cmd(f"iperf3 -c {SERVER_IP} -t 1 -P {int(parallel)} --json", timeout=10)
         try:
             j = json.loads(dl_out) if dl_out else {}
-            # try sum_received or sum_sent
             dl_bps = (j.get("end", {}).get("sum_received", {}).get("bits_per_second")
                       or j.get("end", {}).get("sum_sent", {}).get("bits_per_second") or 0)
-            dl_mbps_final = round(dl_bps / 1_000_000, 2) if dl_bps else 0.0
+            dl_mbps_final = round(dl_bps / 1_000_000, 2) if dl_bps else tasks[task_id]["partial"].get("dl_mbps", 0.0)
         except:
             dl_mbps_final = tasks[task_id]["partial"].get("dl_mbps", 0.0)
         update_partial(dl=dl_mbps_final)
@@ -160,7 +156,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
         with tasks_lock:
             tasks[task_id]["logs"].append(f"iperf3 DL error: {e}")
 
-    # Run iperf3 UL (reverse) to measure upload to server
+    # UL iperf3 (reverse)
     ul_mbps_final = 0.0
     try:
         cmd_ul = f"iperf3 -c {SERVER_IP} -t {int(duration)} -P {int(parallel)} -R"
@@ -178,13 +174,12 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
                 with tasks_lock:
                     tasks[task_id]["logs"].append(line if len(line) < 1000 else line[:1000])
         p.wait()
-        # final UL json quick sample
-        ul_out, ul_err, code = run_cmd(f"iperf3 -c {SERVER_IP} -t {int(1)} -P {int(parallel)} -R --json", timeout=10)
+        ul_out, ul_err, code = run_cmd(f"iperf3 -c {SERVER_IP} -t 1 -P {int(parallel)} -R --json", timeout=10)
         try:
             j = json.loads(ul_out) if ul_out else {}
             ul_bps = (j.get("end", {}).get("sum_received", {}).get("bits_per_second")
                       or j.get("end", {}).get("sum_sent", {}).get("bits_per_second") or 0)
-            ul_mbps_final = round(ul_bps / 1_000_000, 2) if ul_bps else 0.0
+            ul_mbps_final = round(ul_bps / 1_000_000, 2) if ul_bps else tasks[task_id]["partial"].get("ul_mbps", 0.0)
         except:
             ul_mbps_final = tasks[task_id]["partial"].get("ul_mbps", 0.0)
         update_partial(ul=ul_mbps_final)
@@ -192,13 +187,12 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
         with tasks_lock:
             tasks[task_id]["logs"].append(f"iperf3 UL error: {e}")
 
-    # Wait for ping thread to finish (should be done)
+    # join ping thread
     try:
         ping_thread.join(timeout=2)
     except:
         pass
 
-    # Compose final result, save raw json
     timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     final = {
         "device": device,
@@ -233,7 +227,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
         with tasks_lock:
             tasks[task_id]["logs"].append(f"CSV write error: {e}")
 
-    # Finalize task
+    # Finalize
     with tasks_lock:
         tasks[task_id]["status"] = "finished"
         tasks[task_id]["result"] = final
@@ -262,6 +256,100 @@ def run_point():
     t.start()
     return jsonify({"ok": True, "task_id": task_id})
 
+# start_survey: creates a parent task that runs worker_run_point for each point (child tasks)
+@app.route("/start_survey", methods=["POST"])
+def start_survey():
+    payload = request.json or {}
+    device = payload.get("device", "phone")
+    points = payload.get("points", [])
+    repeats = int(payload.get("repeats", 1))
+    manual = bool(payload.get("manual", False))
+    if isinstance(points, str):
+        points = points.split() if points.strip() else []
+    if not points:
+        return jsonify({"ok": False, "error": "no points provided"}), 400
+
+    parent_id = str(uuid.uuid4())
+    with tasks_lock:
+        tasks[parent_id] = {"status":"queued", "total": len(points)*repeats, "done":0, "logs":[], "results": [], "partial": {}, "seq": 0, "cancel": False, "waiting": False, "proceed": False}
+
+    def survey_worker(p_id, device, points, repeats, manual):
+        with tasks_lock:
+            tasks[p_id]["status"] = "running"
+            tasks[p_id]["logs"].append(f"Survey started: {points} repeats:{repeats} manual:{manual}")
+        run_idx = 0
+        for rep in range(repeats):
+            for pt in points:
+                with tasks_lock:
+                    if tasks[p_id].get("cancel"):
+                        tasks[p_id]["status"] = "cancelled"
+                        tasks[p_id]["logs"].append("Survey cancelled")
+                        tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
+                        return
+                run_idx += 1
+                if manual:
+                    with tasks_lock:
+                        tasks[p_id]["waiting"] = True
+                        tasks[p_id]["logs"].append(f"Waiting at point {pt}")
+                        tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
+                    # wait until proceed or cancel
+                    while True:
+                        time.sleep(0.5)
+                        with tasks_lock:
+                            if tasks[p_id].get("cancel"):
+                                tasks[p_id]["status"] = "cancelled"
+                                tasks[p_id]["logs"].append("Survey cancelled during wait")
+                                tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
+                                return
+                            if tasks[p_id].get("proceed"):
+                                tasks[p_id]["proceed"] = False
+                                tasks[p_id]["waiting"] = False
+                                tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
+                                break
+                # child task
+                child_id = str(uuid.uuid4())
+                with tasks_lock:
+                    tasks[child_id] = {"status":"queued", "total":1, "done":0, "logs":[], "results": [], "partial": {}, "seq": 0}
+                # run measurement synchronously (this runs in survey_worker thread)
+                worker_run_point(child_id, device, pt, rep+1, IPERF_DURATION, IPERF_PARALLEL)
+                # collect child result
+                with tasks_lock:
+                    child_result = tasks[child_id].get("result")
+                    if child_result:
+                        tasks[p_id]["results"].append(child_result)
+                        tasks[p_id]["done"] += 1
+                        tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
+                        tasks[p_id]["logs"].append(f"Point done: {pt} ({tasks[p_id]['done']}/{tasks[p_id]['total']})")
+        with tasks_lock:
+            tasks[p_id]["status"] = "finished"
+            tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
+            tasks[p_id]["logs"].append("Survey finished")
+        return
+
+    t = threading.Thread(target=survey_worker, args=(parent_id, device, points, repeats, manual), daemon=True)
+    t.start()
+    return jsonify({"ok": True, "task_id": parent_id})
+
+@app.route("/task_proceed/<task_id>", methods=["POST"])
+def task_proceed(task_id):
+    with tasks_lock:
+        t = tasks.get(task_id)
+        if not t:
+            return jsonify({"ok": False, "error": "task not found"}), 404
+        t["proceed"] = True
+        t["seq"] = t.get("seq", 0) + 1
+    return jsonify({"ok": True})
+
+@app.route("/task_cancel/<task_id>", methods=["POST"])
+def task_cancel(task_id):
+    with tasks_lock:
+        t = tasks.get(task_id)
+        if not t:
+            return jsonify({"ok": False, "error": "task not found"}), 404
+        t["cancel"] = True
+        t["seq"] = t.get("seq", 0) + 1
+    return jsonify({"ok": True})
+
 @app.route("/task_status/<task_id>")
 def task_status(task_id):
     with tasks_lock:
@@ -280,19 +368,18 @@ def stream_task(task_id):
                     yield f"event: error\ndata: {json.dumps({'error':'task not found'})}\n\n"
                     break
                 seq = t.get("seq", 0)
-                # if seq changed, push update
                 if seq != last_seq:
                     last_seq = seq
-                    data = {"status": t.get("status"), "partial": t.get("partial"), "logs": t.get("logs")[-20:]}
+                    data = {"status": t.get("status"), "partial": t.get("partial"), "logs": t.get("logs")[-20:], "done": t.get("done"), "total": t.get("total"), "results": t.get("results", [])}
                     try:
                         yield f"event: update\ndata: {json.dumps(data)}\n\n"
                     except Exception:
-                        # ensure JSON serializable
                         yield f"event: update\ndata: {{}}\n\n"
                 if t.get("status") in ("finished","error","cancelled"):
-                    # send finished with result (if present)
                     try:
-                        yield f"event: finished\ndata: {json.dumps(t.get('result') or {})}\n\n"
+                        # prefer result (single-run) else results (survey)
+                        payload = t.get("result") if t.get("result") else t.get("results", [])
+                        yield f"event: finished\ndata: {json.dumps(payload)}\n\n"
                     except Exception:
                         yield f"event: finished\ndata: {{}}\n\n"
                     break
@@ -317,7 +404,6 @@ def raw_file(fname):
         return send_file(safe_path, as_attachment=True)
     abort(404)
 
-# Optional small endpoint to expose config (used by frontend to know duration)
 @app.route("/_survey_config")
 def survey_config():
     return jsonify({"IPERF_DURATION": IPERF_DURATION, "IPERF_PARALLEL": IPERF_PARALLEL, "SERVER_IP": SERVER_IP})
