@@ -9,10 +9,14 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
-  <script src="/static/app.js?v=10" defer></script>
+  <script src="/static/app.js?v=11" defer></script>
 
   <style>
-    :root { --bg:#f6f7fb; --card:#fff; --muted:#6b7280; --primary:#0b74ff; --gap:12px; --chart-h: clamp(220px, 34vh, 360px); }
+    :root {
+      --bg:#f6f7fb; --card:#fff; --muted:#6b7280; --primary:#0b74ff; --gap:12px;
+      --chart-h: clamp(220px, 34vh, 360px);          /* desktop/tablet */
+      --chart-h-mobile: clamp(220px, 42dvh, 420px);  /* móvil: usa dvh */
+    }
     * { box-sizing:border-box }
     body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial; margin:0; background:var(--bg); color:#0f172a; }
     .container { max-width:1200px; margin:16px auto; padding:0 12px; }
@@ -42,7 +46,7 @@
     .muted { color:#6b7280; font-size:.92rem; }
     .controls-row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
 
-    /* Live panel */
+    /* Live panel (sin tacómetro) */
     #liveVisuals { display:none; gap:16px; align-items:flex-start; margin-top:8px; flex-wrap:wrap; }
     #liveVisuals.show { display:flex; }
     .chart-card { flex:1; min-width:260px; min-height:160px; padding:10px; border-radius:10px; box-shadow:none; overflow:hidden; }
@@ -50,12 +54,25 @@
     .progress-bar { height:12px; width:100%; background:#f1f5f9; border-radius:8px; overflow:hidden; }
     .progress-bar > .fill { height:100%; background:linear-gradient(90deg,#0b74ff,#06b6d4); width:0%; transition:width 200ms linear; }
     .live-stats { margin-top:8px; font-size:0.95rem; color:#111827; text-align:center; word-break:break-word; }
+    #liveMiniChartWrap { height: 200px; position: relative; }
+    #liveMiniChart { width:100% !important; height:100% !important; display:block; }
 
-    /* Results */
+    /* Results: layout robusto y mobile-first */
     .results-grid { display:grid; gap:12px; grid-template-areas: "chart" "content"; }
-    .results-chart.card { grid-area: chart; position: relative; overflow: hidden; }
-    .results-toolbar { position: sticky; top: 0; z-index: 2; background: #fff; padding: 8px 0 10px; border-bottom: 1px solid #f1f5f9; margin: -14px -14px 8px -14px; padding-left:14px; padding-right:14px; }
-    #resultsChartWrap { height: var(--chart-h); position: relative; }
+    .results-chart.card { grid-area: chart; position: relative; overflow: hidden; padding-top: 8px; }
+    .results-toolbar {
+      position: sticky; top: max(0px, env(safe-area-inset-top));
+      z-index: 2; background: #fff;
+      padding: 8px 0 10px; border-bottom: 1px solid #f1f5f9;
+      margin-bottom: 8px; /* sin márgenes negativos */
+    }
+    .toolbar-flex { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+    .toolbar-right {
+      display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+      overflow-x:auto; white-space:nowrap; -webkit-overflow-scrolling: touch;
+      padding-bottom: 2px;
+    }
+    #resultsChartWrap { position: relative; height: var(--chart-h); }
     #throughputChart { width:100% !important; height:100% !important; display:block; }
 
     .results-content.card { grid-area: content; }
@@ -65,14 +82,15 @@
     .summary-card { min-width:240px; max-width:360px; }
     .summary-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
 
-    /* Live mini chart */
-    #liveMiniChartWrap { height: 180px; position: relative; }
-    #liveMiniChart { width:100% !important; height:100% !important; display:block; }
-
     @media (max-width:980px){
       .grid { grid-template-columns: 1fr; }
       .results-content-grid { grid-template-columns: 1fr; }
-      #resultsList { max-height: 52vh; }
+      #resultsChartWrap { height: var(--chart-h-mobile); }
+      #resultsList { max-height: min(50dvh, 520px); }
+    }
+    @media (max-width:680px){
+      .toolbar-flex { align-items:flex-start; }
+      .toolbar-right { width: 100%; }
     }
   </style>
 </head>
@@ -198,12 +216,12 @@
         <div class="results-grid">
           <section class="card results-chart" id="resultsChartCard">
             <div class="results-toolbar">
-              <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+              <div class="toolbar-flex">
                 <div>
                   <strong>Gráfico de resultados</strong>
                   <div class="muted" style="font-size:.88rem">DL / UL / Ping por punto</div>
                 </div>
-                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                <div class="toolbar-right">
                   <label><input type="checkbox" id="toggleDL" checked> DL</label>
                   <label><input type="checkbox" id="toggleUL" checked> UL</label>
                   <label><input type="checkbox" id="togglePing" checked> Ping</label>
@@ -213,7 +231,7 @@
                     <option value="dl-desc">DL desc</option>
                     <option value="dl-asc">DL asc</option>
                   </select>
-                  <button id="refreshChartBtn" class="btn outline">Actualizar gráfico</button>
+                  <button id="refreshChartBtn" class="btn outline">Actualizar</button>
                 </div>
               </div>
             </div>

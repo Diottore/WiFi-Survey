@@ -1,5 +1,5 @@
-// static/app.js v10 — Tacómetro eliminado. Live panel con gráfica de estabilidad, progreso y lecturas.
-// Resultados con gráfico, filtros y exportaciones (incluye CSV de muestras). SSE/polling intacto.
+// static/app.js v11 — Resultados mobile-first: toolbar sticky sin solapamiento, gráfico responsivo,
+// controles con scroll-x en móvil y leyenda compacta. Live panel con gráfica de estabilidad.
 
 (() => {
   const $ = id => document.getElementById(id);
@@ -19,6 +19,7 @@
     if (persist) try { localStorage.setItem('uiMode', mode); } catch(e){}
     if (mode === 'results') {
       ensureResultsChart();
+      // doble RAF para asegurar size correcto tras mostrar
       requestAnimationFrame(()=>requestAnimationFrame(()=>{ try { resultsChart && resultsChart.resize(); } catch{} }));
     }
   }
@@ -79,14 +80,14 @@
       options: {
         responsive:true, maintainAspectRatio:false, animation:{ duration: 0 },
         interaction:{ intersect:false, mode:'index' },
-        plugins:{ legend:{ display:true, position:'top' }, tooltip:{ callbacks:{
-          title:(items)=> items?.[0]?.label ? `t=${items[0].label}s` : '',
-          label:(it)=> `${it.dataset.label}: ${Number(it.parsed.y).toFixed(2)}`
-        }}},
+        plugins:{ legend:{ display:true, position: (matchMedia('(max-width:680px)').matches ? 'bottom' : 'top'),
+          labels:{ boxWidth: 10, font:{ size: matchMedia('(max-width:680px)').matches ? 11 : 12 } } },
+          tooltip:{ callbacks:{ title:(items)=> items?.[0]?.label ? `t=${items[0].label}s` : '',
+          label:(it)=> `${it.dataset.label}: ${Number(it.parsed.y).toFixed(2)}` }}},
         scales: {
-          x: { title:{display:true, text:'s'}, ticks:{ autoSkip:true, maxRotation:0 } },
-          y: { title:{display:true, text:'Mbps'}, beginAtZero:true },
-          y1:{ position:'right', title:{display:true, text:'ms'}, grid:{drawOnChartArea:false}, beginAtZero:true }
+          x: { title:{display:true, text:'s'}, ticks:{ autoSkip:true, maxRotation:0, font:{ size: matchMedia('(max-width:680px)').matches ? 10 : 12 } } },
+          y: { title:{display:true, text:'Mbps'}, beginAtZero:true, ticks:{ font:{ size: matchMedia('(max-width:680px)').matches ? 10 : 12 } } },
+          y1:{ position:'right', title:{display:true, text:'ms'}, grid:{drawOnChartArea:false}, beginAtZero:true, ticks:{ font:{ size: matchMedia('(max-width:680px)').matches ? 10 : 12 } } }
         }
       }
     });
@@ -119,9 +120,20 @@
 
   // ============ Gráfico de Resultados (Chart.js) ============
   let resultsChart = null; let chartRO = null;
+
+  function applyResultsChartResponsiveOptions(chart){
+    const isMobile = matchMedia('(max-width:680px)').matches;
+    chart.options.plugins.legend.position = isMobile ? 'bottom' : 'top';
+    chart.options.plugins.legend.labels.boxWidth = 10;
+    chart.options.plugins.legend.labels.font = { size: isMobile ? 11 : 12 };
+    chart.options.scales.x.ticks.font = { size: isMobile ? 10 : 12 };
+    chart.options.scales.y.ticks.font = { size: isMobile ? 10 : 12 };
+    chart.options.scales.y1.ticks.font = { size: isMobile ? 10 : 12 };
+  }
+
   function ensureResultsChart(){
     const canvas = $('throughputChart'); if(!canvas) return;
-    if(resultsChart) { try { resultsChart.resize(); } catch{} return; }
+    if(resultsChart) { try { applyResultsChartResponsiveOptions(resultsChart); resultsChart.resize(); } catch{} return; }
     const ctx = canvas.getContext('2d');
     resultsChart = new Chart(ctx, {
       type: 'line',
@@ -130,16 +142,27 @@
         { label:'UL Mbps', data: [], borderColor:'#06b6d4', backgroundColor:'rgba(6,182,212,0.06)', yAxisID:'y', tension:0.24, pointRadius:3, fill:true },
         { label:'Ping ms', data: [], borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,0.04)', yAxisID:'y1', tension:0.2, pointRadius:2, borderDash:[4,2], fill:false }
       ]},
-      options: { responsive:true, maintainAspectRatio:false, interaction:{mode:'index', intersect:false}, animation:{duration:250},
-        plugins:{ legend:{position:'top'} },
-        scales:{ x:{ title:{display:true,text:'Punto'}, ticks:{ autoSkip:true, maxRotation:0 } }, y:{ position:'left', title:{display:true,text:'Mbps'}, beginAtZero:true }, y1:{ position:'right', title:{display:true,text:'Ping (ms)'}, beginAtZero:true, grid:{drawOnChartArea:false} } }
+      options: {
+        responsive:true, maintainAspectRatio:false, interaction:{mode:'index', intersect:false}, animation:{duration:250},
+        plugins:{ legend:{ position:'top', labels:{ boxWidth: 12 } } },
+        scales:{ x:{ title:{display:true,text:'Punto'}, ticks:{ autoSkip:true, maxRotation:0 } },
+          y:{ position:'left', title:{display:true,text:'Mbps'}, beginAtZero:true },
+          y1:{ position:'right', title:{display:true,text:'Ping (ms)'}, beginAtZero:true, grid:{drawOnChartArea:false} } }
       }
     });
+    applyResultsChartResponsiveOptions(resultsChart);
+
+    // ResizeObserver para que no quede en 0x0
     const card = $('resultsChartCard');
     if(card && 'ResizeObserver' in window){
-      chartRO = new ResizeObserver(()=> { try { resultsChart.resize(); } catch{} });
+      chartRO = new ResizeObserver(()=> { try { applyResultsChartResponsiveOptions(resultsChart); resultsChart.resize(); } catch{} });
       chartRO.observe(card);
     }
+    // Escucha cambios de media query para reconfigurar leyenda/ticks
+    matchMedia('(max-width:680px)').addEventListener?.('change', ()=> {
+      try { applyResultsChartResponsiveOptions(resultsChart); resultsChart.update(); } catch{}
+    });
+
     rebuildResultsChart();
   }
 
@@ -230,9 +253,8 @@
     const progress=Number(partial.progress_pct || partial.progress || 0);
     const elapsed=Number(partial.elapsed_s || 0);
 
+    // Mostrar panel y actualizar gráfica en vivo
     showLiveVisuals();
-
-    // Actualiza gráfica en vivo
     liveChartPush(elapsed, dl, ul, pingAvg);
 
     // Lecturas instantáneas
@@ -367,7 +389,9 @@
     const lines=[toCsvRow(header)];
     const byPoint=groupBy(results,'point');
     for(const [pt,arr] of byPoint.entries()){
-      const sDL=stats(arr.map(x=>Number(x.iperf_dl_mbps))); const sUL=stats(arr.map(x=>Number(x.iperf_ul_mbps))); const pAvg=stats(arr.map(x=>Number(x.ping_avg))); const p50s=stats(arr.map(x=>Number(x.ping_p50))); const p95s=stats(arr.map(x=>Number(x.ping_p95))); const lossVals=arr.map(x=>Number(x.ping_loss_pct)).filter(v=>!isNaN(v)); const lossAvg=lossVals.length? lossVals.reduce((a,b)=>a+b,0)/lossVals.length : null;
+      const sDL=stats(arr.map(x=>Number(x.iperf_dl_mbps))); const sUL=stats(arr.map(x=>Number(x.iperf_ul_mbps)));
+      const pAvg=stats(arr.map(x=>Number(x.ping_avg))); const p50s=stats(arr.map(x=>Number(x.ping_p50))); const p95s=stats(arr.map(x=>Number(x.ping_p95)));
+      const lossVals=arr.map(x=>Number(x.ping_loss_pct)).filter(v=>!isNaN(v)); const lossAvg=lossVals.length? lossVals.reduce((a,b)=>a+b,0)/lossVals.length : null;
       lines.push(toCsvRow([pt,sDL.n,sDL.avg?.toFixed(4),sDL.min?.toFixed(4),sDL.max?.toFixed(4),sDL.std?.toFixed(4),sUL.avg?.toFixed(4),sUL.min?.toFixed(4),sUL.max?.toFixed(4),sUL.std?.toFixed(4),pAvg.avg?.toFixed(4),pAvg.min?.toFixed(4),pAvg.max?.toFixed(4),pAvg.std?.toFixed(4),p50s.p50?.toFixed(4),p95s.p95?.toFixed(4),lossAvg!=null?lossAvg.toFixed(4):'']));
     }
     download('wifi_results_wide.csv', lines.join('\n'), 'text/csv');
@@ -381,7 +405,9 @@
   exportSummaryJsonBtn?.addEventListener('click', ()=>{
     const summary={}; const byPoint=groupBy(results,'point');
     for(const [pt,arr] of byPoint.entries()){
-      const sDL=stats(arr.map(x=>Number(x.iperf_dl_mbps))); const sUL=stats(arr.map(x=>Number(x.iperf_ul_mbps))); const pAvg=stats(arr.map(x=>Number(x.ping_avg))); const p50s=stats(arr.map(x=>Number(x.ping_p50))); const p95s=stats(arr.map(x=>Number(x.ping_p95))); const lossVals=arr.map(x=>Number(x.ping_loss_pct)).filter(v=>!isNaN(v));
+      const sDL=stats(arr.map(x=>Number(x.iperf_dl_mbps))); const sUL=stats(arr.map(x=>Number(x.iperf_ul_mbps)));
+      const pAvg=stats(arr.map(x=>Number(x.ping_avg))); const p50s=stats(arr.map(x=>Number(x.ping_p50))); const p95s=stats(arr.map(x=>Number(x.ping_p95)));
+      const lossVals=arr.map(x=>Number(x.ping_loss_pct)).filter(v=>!isNaN(v));
       summary[pt]={ count:sDL.n, dl:{avg:sDL.avg,min:sDL.min,max:sDL.max,std:sDL.std}, ul:{avg:sUL.avg,min:sUL.min,max:sUL.max,std:sUL.std}, ping:{avg:pAvg.avg,min:pAvg.min,max:pAvg.max,std:pAvg.std,p50:p50s.p50,p95:p95s.p95}, loss_avg: lossVals.length? lossVals.reduce((a,b)=>a+b,0)/lossVals.length : null };
     }
     download('wifi_summary.json', JSON.stringify(summary,null,2), 'application/json');
