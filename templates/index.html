@@ -9,7 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
-  <script src="/static/app.js?v=11" defer></script>
+  <script src="/static/app.js?v=12" defer></script>
 
   <style>
     :root {
@@ -38,9 +38,14 @@
     /* Cards / forms */
     .card { background:var(--card); padding:14px; border-radius:12px; box-shadow:0 1px 6px rgba(2,6,23,0.06); margin-bottom:var(--gap); }
     .grid { display:grid; gap:12px; grid-template-columns: 1fr 1fr 140px; align-items:start; }
-    input, textarea, select { width:100%; padding:10px; border-radius:10px; border:1px solid #e6e9ee; background:#fff; }
+    input, textarea, select { width:100%; padding:10px; border-radius:10px; border:1px solid #e6e9ee; background:#fff; transition: border-color 0.2s; }
+    input:focus, textarea:focus, select:focus { outline: none; border-color: #0b74ff; box-shadow: 0 0 0 3px rgba(11, 116, 255, 0.1); }
+    input:invalid, textarea:invalid { border-color: #f87171; }
     textarea { resize:vertical; min-height:60px; }
-    .btn { padding:9px 12px; border-radius:10px; border:1px solid #ddd; background:#fff; cursor:pointer; font-weight:600; }
+    .btn { padding:9px 12px; border-radius:10px; border:1px solid #ddd; background:#fff; cursor:pointer; font-weight:600; transition: all 0.2s; }
+    .btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    .btn:active:not(:disabled) { transform: translateY(0); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .btn.primary { background:#0b74ff; color:#fff; border-color:#0b74ff; }
     .btn.outline { background:#fff; border-color:#cbd5e1; }
     .muted { color:#6b7280; font-size:.92rem; }
@@ -56,6 +61,13 @@
     .live-stats { margin-top:8px; font-size:0.95rem; color:#111827; text-align:center; word-break:break-word; }
     #liveMiniChartWrap { height: 200px; position: relative; }
     #liveMiniChart { width:100% !important; height:100% !important; display:block; }
+    
+    /* Status indicators */
+    .status-indicator { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; font-size: 0.85rem; font-weight: 600; }
+    .status-indicator.success { background: #d1fae5; color: #065f46; }
+    .status-indicator.error { background: #fee2e2; color: #991b1b; }
+    .status-indicator.warning { background: #fef3c7; color: #92400e; }
+    .status-indicator.info { background: #dbeafe; color: #1e40af; }
 
     /* Results: layout robusto y mobile-first */
     .results-grid { display:grid; gap:12px; grid-template-areas: "chart" "content"; }
@@ -118,16 +130,29 @@
       <section id="panel-quick" class="panel">
         <section class="card">
           <h2 style="margin:.1rem 0;">Medición rápida</h2>
-          <div class="muted">Ejecuta una medición puntual</div>
+          <div class="muted">Ejecuta una medición puntual de throughput y latencia</div>
 
           <div class="grid" style="margin-top:12px;">
-            <div><label for="device">Equipo (DUT / Tester)</label><input id="device" type="text" value="S24FE" /></div>
-            <div><label for="point">Punto</label><input id="point" type="text" value="P1" /></div>
-            <div><label for="run">Repetición</label><input id="run" type="number" min="1" value="1" /></div>
+            <div>
+              <label for="device">Equipo (DUT / Tester)</label>
+              <input id="device" type="text" value="S24FE" placeholder="Ej: S24FE" maxlength="50" 
+                     title="Nombre del dispositivo (máx. 50 caracteres)" />
+            </div>
+            <div>
+              <label for="point">Punto</label>
+              <input id="point" type="text" value="P1" placeholder="Ej: P1, A1, Sala-1" maxlength="100" 
+                     pattern="[a-zA-Z0-9_-]+" 
+                     title="Identificador del punto de medición (solo letras, números, guiones)" />
+            </div>
+            <div>
+              <label for="run">Repetición</label>
+              <input id="run" type="number" min="1" max="1000" value="1" 
+                     title="Número de repetición (1-1000)" />
+            </div>
             <div style="grid-column:1 / -1; display:flex; gap:8px; margin-top:6px; flex-wrap:wrap;">
-              <button id="runBtn" class="btn primary">Run</button>
-              <button id="downloadBtn" class="btn outline">CSV</button>
-              <button id="showLiveQuick" class="btn outline" style="margin-left:auto;">Mostrar panel</button>
+              <button id="runBtn" class="btn primary" title="Ejecutar medición en este punto">▶ Ejecutar</button>
+              <button id="downloadBtn" class="btn outline" title="Descargar resultados en CSV">📥 CSV</button>
+              <button id="showLiveQuick" class="btn outline" style="margin-left:auto;" title="Mostrar panel de monitoreo en vivo">📊 Panel en vivo</button>
             </div>
           </div>
         </section>
@@ -136,20 +161,35 @@
       <!-- Survey -->
       <section id="panel-survey" class="panel hidden">
         <section class="card">
-          <h2 style="margin:.1rem 0;">Encuesta</h2>
-          <div class="muted">Automatiza varias mediciones</div>
+          <h2 style="margin:.1rem 0;">Encuesta multi-punto</h2>
+          <div class="muted">Automatiza mediciones en múltiples ubicaciones</div>
 
           <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
-            <div><label for="survey_device">Nombre del equipo</label><input id="survey_device" type="text" value="S24FE" /></div>
-            <div><label for="points">Puntos (espacios o comas)</label><textarea id="points" rows="3" placeholder="A1 A2 A3"></textarea></div>
+            <div>
+              <label for="survey_device">Nombre del equipo</label>
+              <input id="survey_device" type="text" value="S24FE" placeholder="Ej: S24FE" maxlength="50" 
+                     title="Nombre del dispositivo de prueba (máx. 50 caracteres)" />
+            </div>
+            <div>
+              <label for="points">Puntos de medición (separados por espacios o comas)</label>
+              <textarea id="points" rows="3" placeholder="Ej: A1 A2 A3 o Sala-1, Sala-2, Patio" 
+                        title="Lista de puntos a medir (máx. 100 puntos)"></textarea>
+            </div>
 
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-              <div style="min-width:160px;"><label for="repeats">Repeticiones</label><input id="repeats" type="number" min="1" value="1" /></div>
-              <label style="display:inline-flex;align-items:center;gap:8px;"><input id="manual_confirm" type="checkbox" checked /> <span class="muted">Pedir confirmación</span></label>
+              <div style="min-width:160px;">
+                <label for="repeats">Repeticiones por punto</label>
+                <input id="repeats" type="number" min="1" max="50" value="1" 
+                       title="Número de repeticiones por cada punto (1-50)" />
+              </div>
+              <label style="display:inline-flex;align-items:center;gap:8px;" title="Requiere confirmación manual antes de cada medición">
+                <input id="manual_confirm" type="checkbox" checked /> 
+                <span class="muted">Confirmación manual</span>
+              </label>
               <div style="margin-left:auto; display:flex; gap:8px;">
-                <button id="startSurvey" class="btn primary">Iniciar</button>
-                <button id="cancelTask" class="btn outline" disabled>Cancelar</button>
-                <button id="showLiveSurvey" class="btn outline">Mostrar panel</button>
+                <button id="startSurvey" class="btn primary" title="Iniciar encuesta automatizada">▶ Iniciar encuesta</button>
+                <button id="cancelTask" class="btn outline" disabled title="Cancelar encuesta en curso">⏹ Cancelar</button>
+                <button id="showLiveSurvey" class="btn outline" title="Mostrar panel de progreso">📊 Panel en vivo</button>
               </div>
             </div>
 
