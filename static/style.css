@@ -48,10 +48,11 @@ html,body{ height:100%; margin:0; background:var(--bg); color:var(--text); }
 .quick .row{ display:flex; gap:8px; }
 .quick .left, .quick .right{ flex:1; display:flex; flex-direction:column; }
 .label{ font-size:0.78rem; color:var(--muted); margin-bottom:6px; }
-input[type="text"], textarea, .small-input{ padding:10px 12px; border-radius:10px; border:1px solid #e6e9ef; font-size:1rem; background:transparent; color:var(--text); width:100%; }
+input[type="text"], textarea{ padding:10px 12px; border-radius:10px; border:1px solid #e6e9ef; font-size:1rem; background:transparent; color:var(--text); width:100%; }
+input[type="number"]{ padding:10px 12px; border-radius:10px; border:1px solid #e6e9ef; font-size:1rem; background:transparent; color:var(--text); }
 .small-input{ width:78px; min-width:78px; }
 
-.actions-row{ display:flex; gap:12px; align-items:stretch; margin-top:10px; flex-direction:column; }
+.actions-row{ display:flex; gap:12px; margin-top:10px; flex-direction:column; }
 .run-controls{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 .secondary-controls{ display:flex; gap:8px; flex-wrap:wrap; }
 
