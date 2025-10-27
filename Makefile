@@ -14,11 +14,17 @@ install-dev:  ## Install development dependencies
 	pip install pylint flake8 black isort pre-commit
 	pre-commit install
 
-test:  ## Run syntax checks
+test:  ## Run syntax checks and unit tests
 	@echo "Checking Python syntax..."
 	python3 -m py_compile app.py
 	python3 -m py_compile iperf3_automation.py
+	python3 -m py_compile validation.py
 	@echo "✓ Syntax checks passed"
+	@echo ""
+	@echo "Running unit tests..."
+	python3 -m unittest test_validation -v
+	@echo ""
+	@echo "✓ All tests passed"
 
 lint:  ## Run linters
 	@echo "Running flake8..."
