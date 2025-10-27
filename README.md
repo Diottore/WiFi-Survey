@@ -161,6 +161,42 @@ bash mobile_wifi_survey.sh
 
 El script te guiará a través del proceso de medición punto por punto.
 
+### Usando Makefile (Opcional)
+
+Si tienes `make` instalado, puedes usar comandos convenientes:
+
+```bash
+make help              # Muestra todos los comandos disponibles
+make install           # Instala dependencias de producción
+make install-dev       # Instala dependencias de desarrollo
+make setup-config      # Crea config.local.ini desde config.ini
+make test              # Ejecuta verificaciones de sintaxis
+make lint              # Ejecuta linters
+make run               # Inicia la aplicación
+make clean             # Limpia archivos generados
+```
+
+### Usando Docker (Servidor)
+
+Para ejecutar el servidor iperf3 y la aplicación web en contenedores:
+
+```bash
+# 1. Copia y edita la configuración
+cp config.ini config.local.ini
+# Edita config.local.ini con tus ajustes
+
+# 2. Inicia los servicios
+docker-compose up -d
+
+# 3. Ver logs
+docker-compose logs -f
+
+# 4. Detener servicios
+docker-compose down
+```
+
+La aplicación estará disponible en `http://<IP-del-servidor>:5000`
+
 ## 🎨 Funcionalidades de la UI
 
 ### 🔹 Run Point
