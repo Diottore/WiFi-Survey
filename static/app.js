@@ -712,6 +712,20 @@
   // Init mínimos
   updateSummary();
   
+  // Load and display test configuration
+  async function loadTestConfig(){
+    try{
+      const cfg = await fetch('/_survey_config').then(r=>r.ok? r.json(): null);
+      if(cfg){
+        const testConfigEl = document.getElementById('testConfig');
+        if(testConfigEl){
+          testConfigEl.textContent = `${cfg.IPERF_DURATION}s × ${cfg.IPERF_PARALLEL} streams → ${cfg.SERVER_IP}`;
+        }
+      }
+    }catch(e){ console.warn('Failed to load config:', e); }
+  }
+  loadTestConfig();
+  
   // Auto-refresh for results
   let autoRefreshInterval = null;
   autoRefreshCheckbox && autoRefreshCheckbox.addEventListener('change', ()=>{

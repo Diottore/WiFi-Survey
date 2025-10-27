@@ -229,13 +229,28 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
         try:
             p = subprocess.Popen(["ping", "-c", str(int(duration)), SERVER_IP],
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            line_count = 0
             for line in p.stdout:
                 line = line.strip()
                 t = parse_ping_time(line)
                 if t is not None:
                     ping_samples.append(t)
                     update_partial(ping_vals=ping_samples, force_sample=True)
-            p.wait()
+                line_count += 1
+                # Safety check: don't process too many lines
+                if line_count > duration * 10:
+                    with tasks_lock:
+                        tasks[task_id]["logs"].append("Warning: ping output excessive, stopping")
+                    p.terminate()
+                    break
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            with tasks_lock:
+                tasks[task_id]["logs"].append("ping timed out")
+            try:
+                p.kill()
+            except:
+                pass
         except Exception as e:
             with tasks_lock:
                 tasks[task_id]["logs"].append(f"ping error: {e}")
@@ -248,6 +263,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
     try:
         cmd_dl = f"iperf3 -c {SERVER_IP} -t {int(duration)} -P {int(parallel)}"
         p = subprocess.Popen(cmd_dl, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        line_count = 0
         for line in p.stdout:
             line = line.strip()
             m = re.search(r'([\d\.]+)\s+Mbits/sec', line)
@@ -260,7 +276,26 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
             if line:
                 with tasks_lock:
                     tasks[task_id]["logs"].append(line if len(line) < 1000 else line[:1000])
-        p.wait()
+            line_count += 1
+            # Safety limit on lines processed
+            if line_count > 1000:
+                with tasks_lock:
+                    tasks[task_id]["logs"].append("Warning: iperf DL output excessive")
+                break
+        
+        # Wait with timeout
+        try:
+            p.wait(timeout=duration + 10)
+        except subprocess.TimeoutExpired:
+            with tasks_lock:
+                tasks[task_id]["logs"].append("iperf3 DL timed out")
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except:
+                p.kill()
+        
+        # Get final result with JSON
         dl_out, _, _ = run_cmd(f"iperf3 -c {SERVER_IP} -t 1 -P {int(parallel)} --json", timeout=10)
         try:
             j = json.loads(dl_out) if dl_out else {}
@@ -279,6 +314,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
     try:
         cmd_ul = f"iperf3 -c {SERVER_IP} -t {int(duration)} -P {int(parallel)} -R"
         p = subprocess.Popen(cmd_ul, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        line_count = 0
         for line in p.stdout:
             line = line.strip()
             m = re.search(r'([\d\.]+)\s+Mbits/sec', line)
@@ -291,7 +327,26 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
             if line:
                 with tasks_lock:
                     tasks[task_id]["logs"].append(line if len(line) < 1000 else line[:1000])
-        p.wait()
+            line_count += 1
+            # Safety limit on lines processed
+            if line_count > 1000:
+                with tasks_lock:
+                    tasks[task_id]["logs"].append("Warning: iperf UL output excessive")
+                break
+        
+        # Wait with timeout
+        try:
+            p.wait(timeout=duration + 10)
+        except subprocess.TimeoutExpired:
+            with tasks_lock:
+                tasks[task_id]["logs"].append("iperf3 UL timed out")
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except:
+                p.kill()
+        
+        # Get final result with JSON
         ul_out, _, _ = run_cmd(f"iperf3 -c {SERVER_IP} -t 1 -P {int(parallel)} -R --json", timeout=10)
         try:
             j = json.loads(ul_out) if ul_out else {}
@@ -306,9 +361,13 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
             tasks[task_id]["logs"].append(f"iperf3 UL error: {e}")
 
     try:
-        ping_thread.join(timeout=2)
-    except:
-        pass
+        ping_thread.join(timeout=duration + 5)
+        if ping_thread.is_alive():
+            with tasks_lock:
+                tasks[task_id]["logs"].append("Warning: ping thread did not finish in time")
+    except Exception as e:
+        with tasks_lock:
+            tasks[task_id]["logs"].append(f"Error joining ping thread: {e}")
 
     with tasks_lock:
         partial_ping = tasks[task_id].get("partial", {})
