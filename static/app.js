@@ -905,17 +905,20 @@
     exportCsvWideBtn.textContent = '🔄 Exportando...';
     
     try{
-      const header=['point','n','dl_avg','dl_min','dl_max','dl_std','ul_avg','ul_min','ul_max','ul_std','ping_avg','ping_min','ping_max','ping_std','ping_p50','ping_p95','loss_avg'];
+      const header=['point','n','dl_avg','dl_min','dl_max','dl_std','ul_avg','ul_min','ul_max','ul_std','ping_avg','ping_min','ping_max','ping_std','ping_p50','ping_p95','jitter_avg','jitter_min','jitter_max','jitter_std','loss_avg'];
       const lines=[toCsvRow(header)];
       const byPoint=groupBy(results,'point');
       for(const [pt,arr] of byPoint.entries()){
         const sDL=stats(arr.map(x=>Number(x.iperf_dl_mbps))); const sUL=stats(arr.map(x=>Number(x.iperf_ul_mbps)));
         const pAvg=stats(arr.map(x=>Number(x.ping_avg))); const p50s=stats(arr.map(x=>Number(x.ping_p50))); const p95s=stats(arr.map(x=>Number(x.ping_p95)));
+        const jitterStats=stats(arr.map(x=>Number(x.ping_jitter)));
         const lossVals=arr.map(x=>Number(x.ping_loss_pct)).filter(v=>!isNaN(v)); const lossAvg=lossVals.length? lossVals.reduce((a,b)=>a+b,0)/lossVals.length : null;
         lines.push(toCsvRow([pt,sDL.n,sDL.avg?.toFixed(4),sDL.min?.toFixed(4),sDL.max?.toFixed(4),sDL.std?.toFixed(4),
           sUL.avg?.toFixed(4),sUL.min?.toFixed(4),sUL.max?.toFixed(4),sUL.std?.toFixed(4),
           pAvg.avg?.toFixed(4),pAvg.min?.toFixed(4),pAvg.max?.toFixed(4),pAvg.std?.toFixed(4),
-          p50s.p50?.toFixed(4),p95s.p95?.toFixed(4),lossAvg!=null?lossAvg.toFixed(4):'']));
+          p50s.p50?.toFixed(4),p95s.p95?.toFixed(4),
+          jitterStats.avg?.toFixed(4),jitterStats.min?.toFixed(4),jitterStats.max?.toFixed(4),jitterStats.std?.toFixed(4),
+          lossAvg!=null?lossAvg.toFixed(4):'']));
       }
       download('wifi_results_wide.csv', lines.join('\n'), 'text/csv');
     }catch(e){
@@ -954,9 +957,11 @@
       for(const [pt,arr] of byPoint.entries()){
         const sDL=stats(arr.map(x=>Number(x.iperf_dl_mbps))); const sUL=stats(arr.map(x=>Number(x.iperf_ul_mbps)));
         const pAvg=stats(arr.map(x=>Number(x.ping_avg))); const p50s=stats(arr.map(x=>Number(x.ping_p50))); const p95s=stats(arr.map(x=>Number(x.ping_p95)));
+        const jitterStats=stats(arr.map(x=>Number(x.ping_jitter)));
         const lossVals=arr.map(x=>Number(x.ping_loss_pct)).filter(v=>!isNaN(v));
         summary[pt]={ count:sDL.n, dl:{avg:sDL.avg,min:sDL.min,max:sDL.max,std:sDL.std}, ul:{avg:sUL.avg,min:sUL.min,max:sUL.max,std:sUL.std},
           ping:{avg:pAvg.avg,min:pAvg.min,max:pAvg.max,std:pAvg.std,p50:p50s.p50,p95:p95s.p95},
+          jitter:{avg:jitterStats.avg,min:jitterStats.min,max:jitterStats.max,std:jitterStats.std},
           loss_avg: lossVals.length? lossVals.reduce((a,b)=>a+b,0)/lossVals.length : null };
       }
       download('wifi_summary.json', JSON.stringify(summary,null,2), 'application/json');
