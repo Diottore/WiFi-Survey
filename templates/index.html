@@ -28,6 +28,9 @@
     .brand .title { font-weight:700; }
     .brand .subtitle { color:#6b7280; font-size:.9rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .top-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .status { width:10px; height:10px; border-radius:50%; margin-right:4px; transition:background 0.3s; }
+    .status.online { background:#10b981; box-shadow:0 0 0 2px rgba(16,185,129,0.2); }
+    .status.offline { background:#ef4444; box-shadow:0 0 0 2px rgba(239,68,68,0.2); }
     .mode-switch { display:flex; gap:6px; border-radius:10px; padding:4px; background:#f8fafc; border:1px solid #e5e7eb; }
     .mode-btn { padding:6px 10px; border-radius:8px; border:1px solid transparent; cursor:pointer; background:transparent; font-weight:600; }
     .mode-btn.active { background:var(--card); border-color:#e5e7eb; box-shadow:0 2px 10px rgba(2,6,23,0.08); }
@@ -82,7 +85,7 @@
     .results-content.card { grid-area: content; }
     .results-content-grid { display:grid; gap:16px; grid-template-columns: 2fr 1fr; align-items:start; }
     #resultsList { display:flex; flex-direction:column; gap:8px; max-height: 56vh; overflow:auto; padding-right:6px; }
-    .result-item { display:flex; gap:12px; padding:8px 6px; border-bottom:1px solid #f3f4f6; align-items:center; word-break:break-word; }
+    .result-item { display:flex; gap:12px; padding:8px 6px; border-bottom:1px solid #f3f4f6; align-items:center; word-break:break-word; flex-wrap:wrap; }
     .summary-card { min-width:240px; max-width:360px; }
     .summary-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
 
@@ -91,10 +94,19 @@
       .results-content-grid { grid-template-columns: 1fr; }
       #resultsChartWrap { height: var(--chart-h-mobile); }
       #resultsList { max-height: min(50dvh, 520px); }
+      .result-item { font-size: 0.9rem; }
+      .result-item > div { min-width: auto !important; }
     }
     @media (max-width:680px){
       .toolbar-flex { align-items:flex-start; }
       .toolbar-right { width: 100%; }
+      .brand .subtitle { display: none; }
+      .mode-btn { padding: 6px 8px; font-size: 0.9rem; }
+    }
+    @media (max-width:480px){
+      .result-item { flex-direction: column; align-items: flex-start; }
+      .result-item > div { width: 100% !important; text-align: left !important; }
+      .grid { gap: 8px; }
     }
   </style>
 </head>
@@ -109,6 +121,7 @@
         </div>
       </div>
       <div class="top-actions">
+        <div class="status online" title="Estado del sistema"></div>
         <div class="mode-switch" role="tablist" aria-label="Modo">
           <button id="modeQuick" class="mode-btn active" aria-pressed="true">Quick</button>
           <button id="modeSurvey" class="mode-btn" aria-pressed="false">Encuesta</button>
@@ -125,14 +138,15 @@
           <div class="muted">Ejecuta una medición puntual</div>
 
           <div class="grid" style="margin-top:12px;">
-            <div><label for="device">Equipo (DUT / Tester)</label><input id="device" type="text" value="S24FE" /></div>
-            <div><label for="point">Punto</label><input id="point" type="text" value="P1" /></div>
-            <div><label for="run">Repetición</label><input id="run" type="number" min="1" value="1" /></div>
+            <div><label for="device">Equipo (DUT / Tester)</label><input id="device" type="text" value="S24FE" placeholder="Nombre del dispositivo" /></div>
+            <div><label for="point">Punto</label><input id="point" type="text" value="P1" placeholder="ID del punto (ej: P1, A1)" /></div>
+            <div><label for="run">Repetición</label><input id="run" type="number" min="1" max="100" value="1" /></div>
             <div style="grid-column:1 / -1; display:flex; gap:8px; margin-top:6px; flex-wrap:wrap;">
-              <button id="runBtn" class="btn primary">Run</button>
-              <button id="downloadBtn" class="btn outline">CSV</button>
-              <button id="showLiveQuick" class="btn outline" style="margin-left:auto;">Mostrar panel</button>
+              <button id="runBtn" class="btn primary">▶ Ejecutar prueba</button>
+              <button id="downloadBtn" class="btn outline">📥 CSV</button>
+              <button id="showLiveQuick" class="btn outline" style="margin-left:auto;">📊 Mostrar panel en vivo</button>
             </div>
+            <div id="quickStatus" class="muted" style="grid-column:1 / -1; margin-top:4px; min-height:20px;"></div>
           </div>
         </section>
       </section>
@@ -144,18 +158,19 @@
           <div class="muted">Automatiza varias mediciones</div>
 
           <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
-            <div><label for="survey_device">Nombre del equipo</label><input id="survey_device" type="text" value="S24FE" /></div>
-            <div><label for="points">Puntos (espacios o comas)</label><textarea id="points" rows="3" placeholder="A1 A2 A3"></textarea></div>
+            <div><label for="survey_device">Nombre del equipo</label><input id="survey_device" type="text" value="S24FE" placeholder="Identificador del dispositivo" /></div>
+            <div><label for="points">Puntos (espacios o comas)</label><textarea id="points" rows="3" placeholder="A1 A2 A3 o A1, A2, A3"></textarea></div>
 
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-              <div style="min-width:160px;"><label for="repeats">Repeticiones</label><input id="repeats" type="number" min="1" value="1" /></div>
-              <label style="display:inline-flex;align-items:center;gap:8px;"><input id="manual_confirm" type="checkbox" checked /> <span class="muted">Pedir confirmación</span></label>
+              <div style="min-width:160px;"><label for="repeats">Repeticiones por punto</label><input id="repeats" type="number" min="1" max="100" value="1" /></div>
+              <label style="display:inline-flex;align-items:center;gap:8px;"><input id="manual_confirm" type="checkbox" checked /> <span class="muted">Pedir confirmación en cada punto</span></label>
               <div style="margin-left:auto; display:flex; gap:8px;">
-                <button id="startSurvey" class="btn primary">Iniciar</button>
-                <button id="cancelTask" class="btn outline" disabled>Cancelar</button>
-                <button id="showLiveSurvey" class="btn outline">Mostrar panel</button>
+                <button id="startSurvey" class="btn primary">▶ Iniciar encuesta</button>
+                <button id="cancelTask" class="btn outline" disabled>⏹ Cancelar</button>
+                <button id="showLiveSurvey" class="btn outline">📊 Mostrar panel</button>
               </div>
             </div>
+            <div id="surveyStatusMsg" class="muted" style="min-height:20px;"></div>
 
             <div id="surveyArea" class="survey-area" hidden>
               <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
@@ -182,8 +197,9 @@
 
         <div style="flex:1; display:flex; flex-direction:column; gap:10px; min-width:260px; width:100%;">
           <div class="card chart-card">
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-              <strong>Progreso de prueba</strong>
+            <strong>Progreso de prueba</strong>
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:4px;">
+              <small class="muted" id="testConfig">Configuración cargando...</small>
               <div id="timeRemaining">00:00</div>
             </div>
             <div class="progress-row" style="margin-top:8px;">
@@ -235,6 +251,9 @@
                     <option value="dl-desc">DL desc</option>
                     <option value="dl-asc">DL asc</option>
                   </select>
+                  <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">
+                    <input type="checkbox" id="autoRefresh" /> Auto-actualizar
+                  </label>
                   <button id="refreshChartBtn" class="btn outline">Actualizar</button>
                 </div>
               </div>
@@ -270,6 +289,7 @@
                   <div><div class="big" id="avgDl">—</div><div class="muted">DL avg</div></div>
                   <div><div class="big" id="avgUl">—</div><div class="muted">UL avg</div></div>
                   <div><div class="big" id="avgPing">—</div><div class="muted">Ping avg ms</div></div>
+                  <div><div class="big" id="totalTests">0</div><div class="muted">Total pruebas</div></div>
                 </div>
                 <div class="summary-actions">
                   <button id="exportJsonBtn" class="btn">Exportar JSON</button>

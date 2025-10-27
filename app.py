@@ -23,6 +23,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Safety limits for process output
+MAX_LINES_PER_SECOND = 10  # Maximum expected lines per second for ping output
+MAX_OUTPUT_LINES = 1000     # Maximum lines to process from iperf3 output
+
 # Load configuration
 def load_config():
     """Load configuration from config.local.ini or config.ini"""
@@ -91,14 +95,29 @@ if not os.path.exists(CSV_FILE):
 tasks = {}
 tasks_lock = threading.Lock()
 
-def run_cmd(cmd, timeout=300):
-    try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-        return r.stdout, r.stderr, r.returncode
-    except subprocess.TimeoutExpired:
-        return "", "timeout", -1
-    except Exception as e:
-        return "", str(e), -1
+def run_cmd(cmd, timeout=300, retries=0):
+    """Run command with optional retry logic"""
+    attempt = 0
+    max_attempts = retries + 1
+    
+    while attempt < max_attempts:
+        try:
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+            return r.stdout, r.stderr, r.returncode
+        except subprocess.TimeoutExpired:
+            attempt += 1
+            if attempt >= max_attempts:
+                return "", "timeout after retries", -1
+            logger.warning(f"Command timeout, retry {attempt}/{retries}")
+            time.sleep(1)
+        except Exception as e:
+            attempt += 1
+            if attempt >= max_attempts:
+                return "", str(e), -1
+            logger.warning(f"Command error: {e}, retry {attempt}/{retries}")
+            time.sleep(1)
+    
+    return "", "max retries exceeded", -1
 
 def parse_ping_time(line):
     m = re.search(r'time=([\d\.]+)', line)
@@ -131,6 +150,25 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
         tasks[task_id]["_last_sample_ts"] = 0.0
 
     start_ts = time.time()
+
+    # Verificar conectividad con el servidor antes de iniciar
+    try:
+        ping_check = subprocess.run(
+            ["ping", "-c", "1", "-W", "2", SERVER_IP],
+            capture_output=True,
+            timeout=3
+        )
+        if ping_check.returncode != 0:
+            with tasks_lock:
+                tasks[task_id]["status"] = "error"
+                tasks[task_id]["logs"].append(f"Error: No se puede alcanzar el servidor {SERVER_IP}")
+                tasks[task_id]["seq"] = tasks[task_id].get("seq", 0) + 1
+            logger.error(f"Server {SERVER_IP} is not reachable")
+            return
+    except Exception as e:
+        with tasks_lock:
+            tasks[task_id]["logs"].append(f"Error verificando servidor: {e}")
+        logger.warning(f"Server check failed: {e}")
 
     # Intentar metadata WiFi (no bloqueante)
     wifi_json = {}
@@ -195,13 +233,28 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
         try:
             p = subprocess.Popen(["ping", "-c", str(int(duration)), SERVER_IP],
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            line_count = 0
             for line in p.stdout:
                 line = line.strip()
                 t = parse_ping_time(line)
                 if t is not None:
                     ping_samples.append(t)
                     update_partial(ping_vals=ping_samples, force_sample=True)
-            p.wait()
+                line_count += 1
+                # Safety check: don't process too many lines
+                if line_count > duration * MAX_LINES_PER_SECOND:
+                    with tasks_lock:
+                        tasks[task_id]["logs"].append("Warning: ping output excessive, stopping")
+                    p.terminate()
+                    break
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            with tasks_lock:
+                tasks[task_id]["logs"].append("ping timed out")
+            try:
+                p.kill()
+            except:
+                pass
         except Exception as e:
             with tasks_lock:
                 tasks[task_id]["logs"].append(f"ping error: {e}")
@@ -214,6 +267,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
     try:
         cmd_dl = f"iperf3 -c {SERVER_IP} -t {int(duration)} -P {int(parallel)}"
         p = subprocess.Popen(cmd_dl, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        line_count = 0
         for line in p.stdout:
             line = line.strip()
             m = re.search(r'([\d\.]+)\s+Mbits/sec', line)
@@ -226,7 +280,26 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
             if line:
                 with tasks_lock:
                     tasks[task_id]["logs"].append(line if len(line) < 1000 else line[:1000])
-        p.wait()
+            line_count += 1
+            # Safety limit on lines processed
+            if line_count > MAX_OUTPUT_LINES:
+                with tasks_lock:
+                    tasks[task_id]["logs"].append("Warning: iperf DL output excessive")
+                break
+        
+        # Wait with timeout
+        try:
+            p.wait(timeout=duration + 10)
+        except subprocess.TimeoutExpired:
+            with tasks_lock:
+                tasks[task_id]["logs"].append("iperf3 DL timed out")
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except:
+                p.kill()
+        
+        # Get final result with JSON
         dl_out, _, _ = run_cmd(f"iperf3 -c {SERVER_IP} -t 1 -P {int(parallel)} --json", timeout=10)
         try:
             j = json.loads(dl_out) if dl_out else {}
@@ -245,6 +318,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
     try:
         cmd_ul = f"iperf3 -c {SERVER_IP} -t {int(duration)} -P {int(parallel)} -R"
         p = subprocess.Popen(cmd_ul, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        line_count = 0
         for line in p.stdout:
             line = line.strip()
             m = re.search(r'([\d\.]+)\s+Mbits/sec', line)
@@ -257,7 +331,26 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
             if line:
                 with tasks_lock:
                     tasks[task_id]["logs"].append(line if len(line) < 1000 else line[:1000])
-        p.wait()
+            line_count += 1
+            # Safety limit on lines processed
+            if line_count > MAX_OUTPUT_LINES:
+                with tasks_lock:
+                    tasks[task_id]["logs"].append("Warning: iperf UL output excessive")
+                break
+        
+        # Wait with timeout
+        try:
+            p.wait(timeout=duration + 10)
+        except subprocess.TimeoutExpired:
+            with tasks_lock:
+                tasks[task_id]["logs"].append("iperf3 UL timed out")
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except:
+                p.kill()
+        
+        # Get final result with JSON
         ul_out, _, _ = run_cmd(f"iperf3 -c {SERVER_IP} -t 1 -P {int(parallel)} -R --json", timeout=10)
         try:
             j = json.loads(ul_out) if ul_out else {}
@@ -272,9 +365,13 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
             tasks[task_id]["logs"].append(f"iperf3 UL error: {e}")
 
     try:
-        ping_thread.join(timeout=2)
-    except:
-        pass
+        ping_thread.join(timeout=duration + 5)
+        if ping_thread.is_alive():
+            with tasks_lock:
+                tasks[task_id]["logs"].append("Warning: ping thread did not finish in time")
+    except Exception as e:
+        with tasks_lock:
+            tasks[task_id]["logs"].append(f"Error joining ping thread: {e}")
 
     with tasks_lock:
         partial_ping = tasks[task_id].get("partial", {})
@@ -581,6 +678,55 @@ def survey_config():
         "IPERF_PARALLEL": IPERF_PARALLEL,
         "SERVER_IP": SERVER_IP
     })
+
+@app.route("/_health")
+def health_check():
+    """Health check endpoint - verify connectivity and dependencies"""
+    health = {
+        "status": "ok",
+        "checks": {},
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    # Check server connectivity
+    try:
+        result = subprocess.run(
+            ["ping", "-c", "1", "-W", "2", SERVER_IP],
+            capture_output=True,
+            timeout=3
+        )
+        health["checks"]["server_reachable"] = result.returncode == 0
+    except Exception as e:
+        health["checks"]["server_reachable"] = False
+        health["checks"]["server_error"] = str(e)
+    
+    # Check iperf3 availability
+    try:
+        result = subprocess.run(
+            ["which", "iperf3"],
+            capture_output=True,
+            timeout=2
+        )
+        health["checks"]["iperf3_available"] = result.returncode == 0
+    except Exception:
+        health["checks"]["iperf3_available"] = False
+    
+    # Check termux-api (if running on Android)
+    try:
+        result = subprocess.run(
+            ["which", "termux-wifi-connectioninfo"],
+            capture_output=True,
+            timeout=2
+        )
+        health["checks"]["termux_api_available"] = result.returncode == 0
+    except Exception:
+        health["checks"]["termux_api_available"] = False
+    
+    # Overall status
+    if not health["checks"].get("server_reachable") or not health["checks"].get("iperf3_available"):
+        health["status"] = "degraded"
+    
+    return jsonify(health)
 
 if __name__ == "__main__":
     logger.info(f"Starting WiFi Survey application on {FLASK_HOST}:{FLASK_PORT}")
