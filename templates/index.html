@@ -29,105 +29,116 @@
       </div>
     </header>
 
+    <!-- Main with tabs -->
     <main class="container" role="main">
+      <nav class="tabs" role="tablist" aria-label="Secciones">
+        <button class="tab active" role="tab" aria-selected="true" data-target="panel-tests" id="tab-tests">Pruebas</button>
+        <button class="tab" role="tab" aria-selected="false" data-target="panel-results" id="tab-results">Resultados</button>
+      </nav>
 
-      <!-- Quick card -->
-      <section class="card quick" aria-labelledby="quick-h">
-        <div class="card-header">
-          <h2 id="quick-h">Medición rápida</h2>
-          <small class="muted">Ejecuta una medición puntual</small>
-        </div>
-
-        <div class="grid">
-          <div class="form-group">
-            <label for="device">Dispositivo</label>
-            <input id="device" type="text" value="S24FE" inputmode="text" autocomplete="off">
-          </div>
-          <div class="form-group">
-            <label for="point">Punto</label>
-            <input id="point" type="text" value="P1" inputmode="text" autocomplete="off">
-          </div>
-          <div class="form-group narrow">
-            <label for="run">Repetición</label>
-            <input id="run" type="number" min="1" value="1" inputmode="numeric">
+      <!-- Panel: Pruebas -->
+      <section id="panel-tests" class="panel" role="tabpanel" aria-labelledby="tab-tests">
+        <section class="card quick" aria-labelledby="quick-h">
+          <div class="card-header">
+            <h2 id="quick-h">Medición rápida</h2>
+            <small class="muted">Ejecuta una medición puntual</small>
           </div>
 
-          <div class="controls" aria-hidden="false">
-            <button id="runBtn" class="btn primary large" aria-live="polite">Run</button>
-            <button id="downloadBtn" class="btn outline">CSV</button>
-          </div>
-        </div>
-
-      </section>
-
-      <!-- Survey card -->
-      <section class="card survey" aria-labelledby="survey-h">
-        <div class="card-header">
-          <h3 id="survey-h">Encuesta</h3>
-          <small class="muted">Automatiza varias mediciones</small>
-        </div>
-
-        <div class="form-row">
-          <label for="survey_device">Nombre del equipo</label>
-          <input id="survey_device" type="text" value="S24FE" />
-        </div>
-
-        <div class="form-row">
-          <label for="points">Puntos (espacios o comas)</label>
-          <textarea id="points" placeholder="A1 A2 A3 B1 B2"></textarea>
-        </div>
-
-        <div class="form-row compact">
-          <div class="form-group narrow">
-            <label for="repeats">Repeticiones</label>
-            <input id="repeats" type="number" min="1" value="2">
-          </div>
-
-          <div class="survey-actions">
-            <button id="startSurvey" class="btn primary">Iniciar</button>
-            <button id="cancelTask" class="btn danger" disabled>Cancelar</button>
-          </div>
-        </div>
-
-        <div id="surveyArea" class="survey-area" hidden>
-          <div class="survey-meta">
-            <div id="surveyStatus" class="muted">Sin tarea</div>
-            <progress id="progressBar" value="0" max="100"></progress>
-          </div>
-          <div id="surveyLog" class="log" aria-live="polite">Logs</div>
-        </div>
-      </section>
-
-      <!-- Results card -->
-      <section class="card results" aria-labelledby="results-h">
-        <div class="card-header">
-          <h3 id="results-h">Resultados recientes</h3>
-          <small class="muted">Últimas mediciones</small>
-        </div>
-
-        <div id="resultsList" class="results-list" role="list" aria-live="polite"></div>
-
-        <div class="charts-row">
-          <div class="chart-card">
-            <canvas id="throughputChart" aria-label="Gráfico de throughput"></canvas>
-          </div>
-          <div class="summary-card">
-            <h4>Resumen rápido</h4>
-            <div class="summary-grid">
-              <div><div class="big" id="avgRssi">—</div><div class="muted">RSSI med</div></div>
-              <div><div class="big" id="avgDl">—</div><div class="muted">DL avg</div></div>
-              <div><div class="big" id="avgUl">—</div><div class="muted">UL avg</div></div>
-              <div><div class="big" id="avgPing">—</div><div class="muted">Ping avg ms</div></div>
-              <div><div class="big" id="avgJitter">—</div><div class="muted">Jitter ms</div></div>
+          <div class="grid">
+            <div class="form-group">
+              <label for="device">Dispositivo</label>
+              <input id="device" type="text" value="S24FE" inputmode="text" autocomplete="off">
             </div>
-            <div class="summary-actions">
-              <button id="exportJsonBtn" class="btn">Exportar JSON</button>
-              <button id="clearResultsBtn" class="btn outline">Limpiar</button>
+            <div class="form-group">
+              <label for="point">Punto</label>
+              <input id="point" type="text" value="P1" inputmode="text" autocomplete="off">
+            </div>
+            <div class="form-group narrow">
+              <label for="run">Repetición</label>
+              <input id="run" type="number" min="1" value="1" inputmode="numeric">
+            </div>
+
+            <div class="controls" aria-hidden="false">
+              <button id="runBtn" class="btn primary large" aria-live="polite">Run</button>
+              <button id="downloadBtn" class="btn outline">CSV</button>
             </div>
           </div>
+        </section>
+
+        <section class="card survey" aria-labelledby="survey-h">
+          <div class="card-header">
+            <h3 id="survey-h">Encuesta</h3>
+            <small class="muted">Automatiza varias mediciones</small>
+          </div>
+
+          <div class="form-row">
+            <label for="survey_device">Nombre del equipo</label>
+            <input id="survey_device" type="text" value="S24FE" />
+          </div>
+
+          <div class="form-row">
+            <label for="points">Puntos (espacios o comas)</label>
+            <textarea id="points" placeholder="A1 A2 A3 B1 B2"></textarea>
+          </div>
+
+          <div class="form-row compact">
+            <div class="form-group narrow">
+              <label for="repeats">Repeticiones</label>
+              <input id="repeats" type="number" min="1" value="2">
+            </div>
+
+            <div class="survey-actions">
+              <button id="startSurvey" class="btn primary">Iniciar</button>
+              <button id="cancelTask" class="btn danger" disabled>Cancelar</button>
+            </div>
+          </div>
+
+          <div id="surveyArea" class="survey-area" hidden>
+            <div class="survey-meta">
+              <div id="surveyStatus" class="muted">Sin tarea</div>
+              <progress id="progressBar" value="0" max="100"></progress>
+            </div>
+            <div id="surveyLog" class="log" aria-live="polite">Logs</div>
+          </div>
+        </section>
+
+        <!-- FAB mostrado en Pruebas -->
+        <div class="fab-holder">
+          <button id="fabRun" class="fab" title="Run rápido" aria-label="Run rápido">▶</button>
         </div>
       </section>
 
+      <!-- Panel: Resultados -->
+      <section id="panel-results" class="panel hidden" role="tabpanel" aria-labelledby="tab-results">
+        <section class="card results" aria-labelledby="results-h">
+          <div class="card-header">
+            <h3 id="results-h">Resultados recientes</h3>
+            <small class="muted">Últimas mediciones</small>
+          </div>
+
+          <div id="resultsList" class="results-list" role="list" aria-live="polite"></div>
+
+          <div class="charts-row">
+            <div class="chart-card">
+              <canvas id="throughputChart" aria-label="Gráfico de throughput"></canvas>
+            </div>
+            <div class="summary-card">
+              <h4>Resumen rápido</h4>
+              <div class="summary-grid">
+                <div><div class="big" id="avgRssi">—</div><div class="muted">RSSI med</div></div>
+                <div><div class="big" id="avgDl">—</div><div class="muted">DL avg</div></div>
+                <div><div class="big" id="avgUl">—</div><div class="muted">UL avg</div></div>
+                <div><div class="big" id="avgPing">—</div><div class="muted">Ping avg ms</div></div>
+                <div><div class="big" id="avgJitter">—</div><div class="muted">Jitter ms</div></div>
+              </div>
+              <div class="summary-actions">
+                <button id="exportJsonBtn" class="btn">Exportar JSON</button>
+                <button id="clearResultsBtn" class="btn outline">Limpiar</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </section>
     </main>
 
     <nav class="bottombar" role="navigation" aria-label="Navegación inferior">
@@ -135,7 +146,8 @@
         <div class="muted">Servidor: <span id="serverIp">192.168.1.10</span></div>
       </div>
       <div class="nav-right">
-        <button id="fabRun" class="fab" title="Run rápido" aria-label="Run rápido">▶</button>
+        <button id="btn-go-to-tests" class="btn small">Ir a Pruebas</button>
+        <button id="btn-go-to-results" class="btn small">Ir a Resultados</button>
       </div>
     </nav>
 

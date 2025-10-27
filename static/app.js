@@ -1,10 +1,42 @@
-// static/app.js - mejoras responsive + mostrar ping y jitter
-// Cargado con defer. Mantiene compatibilidad con endpoints existentes.
+// static/app.js - Tabs (Pruebas / Resultados) + lógica previa (chart líneas)
+// Mantiene compatibilidad con endpoints y funciones anteriores.
 
 (() => {
   const $ = id => document.getElementById(id);
 
-  // Elements
+  // Tabs
+  const tabs = Array.from(document.querySelectorAll('.tab'));
+  function showPanel(panelId) {
+    // panels
+    const panels = document.querySelectorAll('.panel');
+    panels.forEach(p => p.id === panelId ? p.classList.remove('hidden') : p.classList.add('hidden'));
+    // tab active
+    tabs.forEach(t => {
+      const target = t.getAttribute('data-target');
+      if (target === panelId) {
+        t.classList.add('active');
+        t.setAttribute('aria-selected', 'true');
+      } else {
+        t.classList.remove('active');
+        t.setAttribute('aria-selected', 'false');
+      }
+    });
+    // contextual UI tweaks
+    const fab = $('fabRun');
+    if (panelId === 'panel-tests') fab && (fab.style.display = 'inline-flex');
+    else fab && (fab.style.display = 'none');
+  }
+  tabs.forEach(t => t.addEventListener('click', e => { showPanel(t.getAttribute('data-target')); }));
+
+  // quick nav bottom buttons
+  const btnGoTests = $('btn-go-to-tests'), btnGoResults = $('btn-go-to-results');
+  btnGoTests && btnGoTests.addEventListener('click', () => showPanel('panel-tests'));
+  btnGoResults && btnGoResults.addEventListener('click', () => showPanel('panel-results'));
+
+  // Initialize to tests
+  showPanel('panel-tests');
+
+  // Existing elements & logic
   const deviceEl = $('device'), pointEl = $('point'), runEl = $('run'), runBtn = $('runBtn');
   const downloadBtn = $('downloadBtn'), pointsEl = $('points'), repeatsEl = $('repeats');
   const startSurveyBtn = $('startSurvey'), cancelTaskBtn = $('cancelTask');
@@ -19,12 +51,28 @@
   let flushing = false;
   let results = [];
 
-  // Chart
+  // Chart: line (DL/UL/Ping)
   const ctx = document.getElementById('throughputChart').getContext('2d');
   const chart = new Chart(ctx, {
-    type: 'bar',
-    data: { labels: [], datasets: [{ label: 'DL Mbps', data: [], backgroundColor: '#0066ff' }] },
-    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true}} }
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        { label: 'DL Mbps', data: [], borderColor: '#0b74ff', backgroundColor: 'rgba(11,116,255,0.08)', yAxisID: 'y', tension: 0.24, pointRadius: 4, fill: true },
+        { label: 'UL Mbps', data: [], borderColor: '#06b6d4', backgroundColor: 'rgba(6,182,212,0.06)', yAxisID: 'y', tension: 0.24, pointRadius: 4, fill: true },
+        { label: 'Ping ms', data: [], borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.04)', yAxisID: 'y1', tension: 0.2, pointRadius: 3, borderDash: [4,2], fill: false }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'top' } },
+      scales: {
+        x: { title: { display: true, text: 'Punto' } },
+        y: { type: 'linear', display: true, position: 'left', title: { display: true, text: 'Throughput (Mbps)' }, beginAtZero: true },
+        y1: { type: 'linear', display: true, position: 'right', title: { display: true, text: 'Ping (ms)' }, beginAtZero: true, grid: { drawOnChartArea: false } }
+      }
+    }
   });
 
   // Debounce helper
@@ -32,7 +80,8 @@
 
   // Resize observer for chart
   const ro = new ResizeObserver(debounce(() => { try{ chart.resize(); }catch(e){} }, 120));
-  ro.observe(document.querySelector('.chart-card') || document.body);
+  const chartCard = document.querySelector('.chart-card') || document.body;
+  ro.observe(chartCard);
 
   function norm(s){ if(s===null||s===undefined) return ''; return String(s).trim().replace(/\s+/g,' '); }
 
@@ -50,17 +99,20 @@
     const frag = document.createDocumentFragment();
     while(resultBuffer.length){
       const r = resultBuffer.shift();
-      // normalize fields
+      // normalize and map fields
       r.point = norm(r.point);
       r.ssid = norm(r.ssid);
       r.bssid = norm(r.bssid);
       r.rssi = norm(r.rssi);
-      r.ping_avg = r.ping_avg ?? r.ping_avg_ms ?? r.ping_avg;
-      r.ping_jitter = r.ping_jitter ?? r.ping_jitter_ms ?? r.ping_jitter;
+      r.iperf_dl_mbps = r.iperf_dl_mbps ?? r.dl_mbps ?? r.dl ?? 0;
+      r.iperf_ul_mbps = r.iperf_ul_mbps ?? r.ul_mbps ?? r.ul ?? 0;
+      r.ping_avg = r.ping_avg ?? r.ping_avg_ms ?? r.ping?.avg_ms ?? '';
+      r.ping_jitter = r.ping_jitter ?? r.ping_jitter_ms ?? r.ping?.jitter_ms ?? '';
 
       results.unshift(r);
       if(results.length>300) results.pop();
 
+      // create card
       const card = document.createElement('div');
       card.className = 'result-card';
       card.innerHTML = `
@@ -81,10 +133,16 @@
       `;
       frag.appendChild(card);
 
-      // chart update
-      chart.data.labels.unshift(r.point);
+      // Chart update
+      const label = r.point || ('pt' + Date.now());
+      chart.data.labels.unshift(label);
       chart.data.datasets[0].data.unshift(Number(r.iperf_dl_mbps) || 0);
-      if(chart.data.labels.length>20){ chart.data.labels.pop(); chart.data.datasets[0].data.pop(); }
+      chart.data.datasets[1].data.unshift(Number(r.iperf_ul_mbps) || 0);
+      const pingNum = (r.ping_avg !== '' && !isNaN(Number(r.ping_avg))) ? Number(r.ping_avg) : null;
+      chart.data.datasets[2].data.unshift(pingNum);
+      // Trim
+      const MAX = 40;
+      if(chart.data.labels.length > MAX){ chart.data.labels.pop(); chart.data.datasets.forEach(ds=>ds.data.pop()); }
     }
 
     resultsList.prepend(frag);
@@ -99,9 +157,7 @@
     const ulVals = results.map(x=>Number(x.iperf_ul_mbps)).filter(n=>!isNaN(n));
     const pingVals = results.map(x=>Number(x.ping_avg)).filter(n=>!isNaN(n));
     const jitterVals = results.map(x=>Number(x.ping_jitter)).filter(n=>!isNaN(n));
-
     const avg = arr => arr.length ? (arr.reduce((a,b)=>a+b,0)/arr.length) : NaN;
-
     avgRssi.textContent = rssiVals.length ? Math.round(avg(rssiVals)) + ' dBm' : '—';
     avgDl.textContent = dlVals.length ? avg(dlVals).toFixed(2) + ' Mbps' : '—';
     avgUl.textContent = ulVals.length ? avg(ulVals).toFixed(2) + ' Mbps' : '—';
@@ -146,6 +202,8 @@
       if(!j.ok){ surveyLog.textContent = 'Error: ' + (j.error||''); startSurveyBtn.disabled=false; return; }
       pollTask(j.task_id);
       cancelTaskBtn.disabled = false;
+      // switch to Results automatically for live view
+      showPanel('panel-results');
     } catch(e){ surveyLog.textContent = 'Error al iniciar: '+e; startSurveyBtn.disabled=false; }
   });
 
@@ -185,7 +243,7 @@
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'wifi_recent.json'; a.click();
     URL.revokeObjectURL(a.href);
   });
-  clearResultsBtn && clearResultsBtn.addEventListener('click', ()=> { results=[]; resultsList.innerHTML=''; chart.data.labels=[]; chart.data.datasets[0].data=[]; chart.update(); updateSummary(); });
+  clearResultsBtn && clearResultsBtn.addEventListener('click', ()=> { results=[]; resultsList.innerHTML=''; chart.data.labels=[]; chart.data.datasets.forEach(ds=>ds.data=[]); chart.update(); updateSummary(); });
 
   // status
   function setStatus(ok){ statusDot.className = ok ? 'status online' : 'status offline'; }
@@ -194,6 +252,6 @@
   (async ()=>{ try { const r = await fetch('/list_raw'); setStatus(r.ok); } catch(e){ setStatus(false); } })();
 
   // expose for debug
-  window.__ws = { pushResult, results, chart };
+  window.__ws = { pushResult, results, chart, showPanel };
 
 })();
