@@ -1,17 +1,14 @@
-// static/app.js v9 — Gráfica en vivo de estabilidad + exportación de muestras.
-// Mantiene tacómetro custom, SSE/polling, resultados y gráficos mejorados.
+// static/app.js v10 — Tacómetro eliminado. Live panel con gráfica de estabilidad, progreso y lecturas.
+// Resultados con gráfico, filtros y exportaciones (incluye CSV de muestras). SSE/polling intacto.
 
 (() => {
   const $ = id => document.getElementById(id);
-
-  // Config tacómetro
-  const GAUGE_START_DEG = Number(localStorage.getItem('gaugeStartDeg') ?? 180);
-  const GAUGE_SWEEP_DEG = Number(localStorage.getItem('gaugeSweepDeg') ?? 240);
 
   // Panels / Mode
   const panelQuick = $('panel-quick'), panelSurvey = $('panel-survey'), panelResults = $('panel-results');
   const modeQuickBtn = $('modeQuick'), modeSurveyBtn = $('modeSurvey'), modeResultsBtn = $('modeResults');
   const goToSurveyBtn = $('btn-go-to-survey'), goToResultsBtn = $('modeResults') || $('btn-go-to-results'), goToTestsBtn = $('btn-go-to-tests');
+
   function setMode(mode, persist = true) {
     const map = { quick: panelQuick, survey: panelSurvey, results: panelResults };
     Object.entries(map).forEach(([k,v]) => v && v.classList.toggle('hidden', k !== mode));
@@ -20,7 +17,10 @@
     if (mode === 'survey' && modeSurveyBtn) modeSurveyBtn.classList.add('active');
     if (mode === 'results' && modeResultsBtn) modeResultsBtn.classList.add('active');
     if (persist) try { localStorage.setItem('uiMode', mode); } catch(e){}
-    if (mode === 'results') { ensureResultsChart(); requestAnimationFrame(()=>requestAnimationFrame(()=>{ try { resultsChart && resultsChart.resize(); } catch{} })); }
+    if (mode === 'results') {
+      ensureResultsChart();
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{ try { resultsChart && resultsChart.resize(); } catch{} }));
+    }
   }
   modeQuickBtn && modeQuickBtn.addEventListener('click', ()=> setMode('quick'));
   modeSurveyBtn && modeSurveyBtn.addEventListener('click', ()=> setMode('survey'));
@@ -39,9 +39,6 @@
 
   // Live UI
   const liveVisuals = $('liveVisuals');
-  const speedGaugeCanvas = $('speedGauge');
-  const speedValEl = $('speedVal'), speedUnitEl = $('speedUnit');
-  const gaugeLabel = $('gaugeLabel');
   const runProgressFill = $('runProgressFill'), progressPct = $('progressPct'), timeRemainingEl = $('timeRemaining'), liveSummary = $('liveSummary');
   const instDlEl = $('instDl'), instUlEl = $('instUl'), instPingEl = $('instPing'), instPing50El = $('instPing50'), instPing95El = $('instPing95'), instLossEl = $('instLoss');
   const showLiveQuick = $('showLiveQuick'), showLiveSurvey = $('showLiveSurvey'), hideLivePanelBtn = $('hideLivePanel');
@@ -61,54 +58,10 @@
   let lastSurveyTaskId = null;
   let currentSse = null;
 
-  // ============ Tacómetro ============
-  class Speedometer {
-    constructor(canvas, opts = {}) {
-      this.canvas = canvas; this.ctx = canvas.getContext('2d');
-      this.value = 0; this.animVal = 0;
-      this.max = opts.max || 200;
-      this.displayStep = this.niceStep(this.max, 6); this.displayMax = this.displayStep*6;
-      this.observedPeak = 0;
-      this.startDeg = Number(opts.startDeg ?? 180);
-      this.sweepDeg = Number(opts.sweepDeg ?? 240);
-      this.pixelRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-      this._raf = null; this._lastTs = 0;
-      this._resizeObserver = new ResizeObserver(()=> this.resize()); this._resizeObserver.observe(canvas.parentElement || canvas);
-      this.resize();
-    }
-    toRad(d){ return d*Math.PI/180 }
-    niceStep(max, majors=6){ const step=Math.max(1,max/majors); const pow=10**Math.floor(Math.log10(step)); const base=step/pow; const n= base<=1?1:base<=2?2:base<=5?5:10; return n*pow; }
-    niceMaxFor(v){ const step=this.niceStep(v,6); return step*6; }
-    formatValue(val){ if(val>=1000){ const g=val/1000; return {num:g>=10? String(Math.round(g)) : g.toFixed(1), unit:'Gbps'}; } return {num:Number(val).toFixed(val>=100?1:2), unit:'Mbps'}; }
-    set(v){ this.value=Math.max(0,Number(v)||0); this.observedPeak=Math.max(this.observedPeak,this.value); const targetMax=this.niceMaxFor(this.observedPeak); this.max += (targetMax-this.max)*0.12; this.displayStep=this.niceStep(this.max,6); this.displayMax=this.displayStep*6; if(!this._raf) this._raf=requestAnimationFrame(ts=>this.draw(ts)); }
-    resize(){ const box=this.canvas.getBoundingClientRect(); const pr=this.pixelRatio; const w=Math.max(320,Math.round(box.width))||360; const h=Math.round(w*0.62); this.canvas.width=Math.round(w*pr); this.canvas.height=Math.round(h*pr); this.canvas.style.width=w+'px'; this.canvas.style.height=h+'px'; this.cx=this.canvas.width/2; this.cy=this.canvas.height*0.95; this.radius=Math.min(this.cx,this.canvas.height*0.9)*0.92; this.thickness=Math.max(12,this.radius*0.12); this.tickLenMajor=this.thickness*0.9; this.tickLenMinor=this.thickness*0.55; this.fontBase=Math.max(10,this.canvas.width*0.035); this._raf=this._raf||requestAnimationFrame(ts=>this.draw(ts)); }
-    draw(ts){ const ctx=this.ctx; const pr=this.pixelRatio; const dt=Math.min(0.08,(ts-this._lastTs)/1000||0.016); this._lastTs=ts; this.animVal += (this.value-this.animVal)*Math.min(1,dt*5); const startA=this.toRad(this.startDeg), endA=startA+this.toRad(this.sweepDeg);
-      ctx.clearRect(0,0,this.canvas.width,this.canvas.height); ctx.save(); ctx.translate(this.cx,this.cy);
-      ctx.lineCap='round'; ctx.lineWidth=this.thickness; ctx.strokeStyle='rgba(15,23,42,0.08)'; ctx.beginPath(); ctx.arc(0,0,this.radius,startA,endA); ctx.stroke();
-      const f=Math.max(0,Math.min(1,this.animVal/this.displayMax)); const grad=ctx.createLinearGradient(-this.radius,0,this.radius,0); grad.addColorStop(0,'#06b6d4'); grad.addColorStop(0.55,'#0b74ff'); grad.addColorStop(1,'#7c3aed'); ctx.strokeStyle=grad; ctx.shadowColor='rgba(12,74,110,0.35)'; ctx.shadowBlur=Math.max(6*pr,this.thickness*0.6); ctx.beginPath(); ctx.arc(0,0,this.radius,startA,startA+f*(endA-startA)); ctx.stroke(); ctx.shadowBlur=0;
-      const majors=6,minors=4; ctx.lineWidth=Math.max(2*pr,this.thickness*0.14); ctx.strokeStyle='rgba(15,23,42,0.22)';
-      for(let i=0;i<=majors;i++){ const frac=i/majors, a=startA+frac*(endA-startA); const r1=this.radius+this.thickness*0.05, r2=r1+this.tickLenMajor; ctx.beginPath(); ctx.moveTo(r1*Math.cos(a),r1*Math.sin(a)); ctx.lineTo(r2*Math.cos(a),r2*Math.sin(a)); ctx.stroke();
-        if(i<majors){ for(let m=1;m<minors;m++){ const frac2=(i+m/minors)/majors, a2=startA+frac2*(endA-startA); const r3=this.radius+this.thickness*0.05, r4=r3+this.tickLenMinor; ctx.beginPath(); ctx.moveTo(r3*Math.cos(a2),r3*Math.sin(a2)); ctx.lineTo(r4*Math.cos(a2),r4*Math.sin(a2)); ctx.stroke(); } }
-      }
-      const fontPx=Math.max(10,this.fontBase*0.75); ctx.fillStyle='#111827'; ctx.font=`600 ${fontPx}px Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial`; ctx.textAlign='center'; ctx.textBaseline='middle'; const labelR=this.radius+this.thickness*1.55;
-      for(let i=0;i<=majors;i++){ const val=i*(this.displayStep); const text= val>=1000? ((val/1000)>=10? `${Math.round(val/1000)}k` : `${(val/1000).toFixed(1)}k`) : String(Math.round(val)); const frac=i/majors, a=startA+frac*(endA-startA); ctx.fillText(text, labelR*Math.cos(a), labelR*Math.sin(a)); }
-      ctx.restore();
-      const {num,unit}=this.formatValue(this.animVal); speedValEl && (speedValEl.textContent=num); speedUnitEl && (speedUnitEl.textContent=unit); gaugeLabel && (gaugeLabel.textContent = `${Number(this.animVal).toFixed(2)} Mbps`);
-      if(Math.abs(this.value-this.animVal)>0.01) this._raf=requestAnimationFrame(t=>this.draw(t)); else this._raf=null;
-    }
-  }
-  let speedo=null;
-  function showLiveVisuals(){ if(liveVisuals){ liveVisuals.classList.add('show'); createGauge(0,200); ensureLiveMiniChart(); } }
-  function hideLiveVisuals(){ if(liveVisuals){ liveVisuals.classList.remove('show'); } }
-  $('hideLivePanel')?.addEventListener('click', hideLiveVisuals);
-  showLiveQuick?.addEventListener('click', ()=> { showLiveVisuals(); setMode('results'); });
-  showLiveSurvey?.addEventListener('click', ()=> { showLiveVisuals(); setMode('results'); });
-  function createGauge(initial=0, max=200){ if(!speedGaugeCanvas) return null; if(!speedo) speedo=new Speedometer(speedGaugeCanvas,{max, startDeg:GAUGE_START_DEG, sweepDeg:GAUGE_SWEEP_DEG}); setGaugeValue(initial); return speedo; }
-  function setGaugeValue(v){ if(!speedo) createGauge(0,200); speedo && speedo.set(Number(v)||0); }
-
-  // ============ Mini gráfica en vivo (estabilidad) ============
+  // ============ Live mini chart (estabilidad) ============
   let liveMiniChart = null;
   let liveSamples = []; // {t, dl, ul, ping}
+
   function ensureLiveMiniChart(){
     const canvas = $('liveMiniChart'); if(!canvas) return;
     if(liveMiniChart) return;
@@ -128,7 +81,7 @@
         interaction:{ intersect:false, mode:'index' },
         plugins:{ legend:{ display:true, position:'top' }, tooltip:{ callbacks:{
           title:(items)=> items?.[0]?.label ? `t=${items[0].label}s` : '',
-          label:(it)=> `${it.dataset.label}: ${Number(it.parsed.y).toFixed(it.dataset.yAxisID==='y' ? 2 : 2)}`
+          label:(it)=> `${it.dataset.label}: ${Number(it.parsed.y).toFixed(2)}`
         }}},
         scales: {
           x: { title:{display:true, text:'s'}, ticks:{ autoSkip:true, maxRotation:0 } },
@@ -142,8 +95,7 @@
     ensureLiveMiniChart();
     if(!liveMiniChart) return;
     liveSamples.push({t, dl, ul, ping});
-    // mantener 600 puntos máx (~10 min si 1 Hz)
-    if(liveSamples.length > 600) liveSamples.shift();
+    if(liveSamples.length > 600) liveSamples.shift(); // ~10 min @1Hz
     liveMiniChart.data.labels = liveSamples.map(s=>s.t);
     liveMiniChart.data.datasets[0].data = liveSamples.map(s=>s.dl ?? null);
     liveMiniChart.data.datasets[1].data = liveSamples.map(s=>s.ul ?? null);
@@ -158,6 +110,12 @@
       liveMiniChart.update('none');
     }
   }
+
+  function showLiveVisuals(){ if(liveVisuals){ liveVisuals.classList.add('show'); ensureLiveMiniChart(); } }
+  function hideLiveVisuals(){ if(liveVisuals){ liveVisuals.classList.remove('show'); } }
+  hideLivePanelBtn && hideLivePanelBtn.addEventListener('click', hideLiveVisuals);
+  showLiveQuick && showLiveQuick.addEventListener('click', ()=> { showLiveVisuals(); setMode('results'); });
+  showLiveSurvey && showLiveSurvey.addEventListener('click', ()=> { showLiveVisuals(); setMode('results'); });
 
   // ============ Gráfico de Resultados (Chart.js) ============
   let resultsChart = null; let chartRO = null;
@@ -184,6 +142,7 @@
     }
     rebuildResultsChart();
   }
+
   function getFilteredSortedResults(){
     const q=(searchInput?.value||'').trim().toLowerCase();
     let arr=[...results];
@@ -195,6 +154,7 @@
     else arr.sort((a,b)=> new Date(b.timestamp)-new Date(a.timestamp));
     return arr;
   }
+
   function rebuildResultsChart(){
     if(!resultsChart) return;
     const arr=getFilteredSortedResults();
@@ -207,6 +167,7 @@
     if(togglePing) resultsChart.data.datasets[2].hidden = !togglePing.checked;
     resultsChart.update('active');
   }
+
   function addLatestPointToChart(r){
     if(!resultsChart) return;
     resultsChart.data.labels.unshift(r.point || new Date(r.timestamp).toLocaleTimeString());
@@ -219,6 +180,7 @@
     if(togglePing) resultsChart.data.datasets[2].hidden = !togglePing.checked;
     resultsChart.update('active');
   }
+
   // Controles resultados
   function debounce(fn,ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms); }; }
   toggleDL && toggleDL.addEventListener('change', rebuildResultsChart);
@@ -246,6 +208,7 @@
       try{ const r=await fetch(`/task_status/${task_id}`); if(!r.ok) return; const js=await r.json(); if(js.partial) handlePartialUpdate(js); if(js.status==='finished'){ handleFinalResult(js.result||js.results||{}); clearInterval(pollIntervalHandle); pollIntervalHandle=null; } }catch(e){ console.warn('poll error',e); }
     }, ms);
   }
+
   function fmtTime(s){ s=Math.max(0,Math.round(s)); const mm=String(Math.floor(s/60)).padStart(2,'0'); const ss=String(s%60).padStart(2,'0'); return `${mm}:${ss}`; }
   function num(n){ const v=Number(n); return isNaN(v)? null : v; }
 
@@ -268,11 +231,11 @@
     const elapsed=Number(partial.elapsed_s || 0);
 
     showLiveVisuals();
-    setGaugeValue(dl);
 
-    // Actualizar mini gráfica en vivo
+    // Actualiza gráfica en vivo
     liveChartPush(elapsed, dl, ul, pingAvg);
 
+    // Lecturas instantáneas
     instDlEl && (instDlEl.textContent = `${dl.toFixed(2)} Mbps`);
     instUlEl && (instUlEl.textContent = `${ul.toFixed(2)} Mbps`);
     instPingEl && (instPingEl.textContent = pingAvg!=null ? `${pingAvg.toFixed(2)} ms` : '—');
@@ -280,6 +243,7 @@
     instPing95El && (instPing95El.textContent = p95!=null ? `${p95.toFixed(2)} ms` : '—');
     instLossEl && (instLossEl.textContent = loss!=null ? `${loss.toFixed(2)} %` : '—');
 
+    // Progreso y tiempo restante
     runProgressFill && (runProgressFill.style.width = `${progress}%`);
     progressPct && (progressPct.textContent = `${progress}%`);
     updateRemaining(elapsed, partial);
@@ -294,14 +258,13 @@
       liveSummary && (liveSummary.textContent = `Encuesta finalizada: ${res.length} puntos`);
     } else {
       const mapped = mapFinalToResult(res);
-      // Si el backend no trae samples, usa lo recogido en frontend como fallback
+      // Fallback: si el backend no trajo samples, usa los del frontend
       if(!mapped.samples || !mapped.samples.length){
         mapped.samples = liveSamples.map(s=>({ t:s.t, dl:s.dl, ul:s.ul, ping:s.ping }));
       }
-      // animación pequeña al valor final
-      const dl=Number(mapped.iperf_dl_mbps||0), start=speedo?speedo.animVal:0, target=Math.max(start,dl);
-      let i=0; const steps=24; const anim=setInterval(()=>{ i++; const t=i/steps; setGaugeValue(start+(target-start)*(1-Math.cos(Math.PI*t))/2); if(i>=steps) clearInterval(anim); },18);
 
+      // Actualiza lecturas finales
+      const dl=Number(mapped.iperf_dl_mbps||0);
       instDlEl && (instDlEl.textContent = `${dl.toFixed(2)} Mbps`);
       instUlEl && (instUlEl.textContent = `${Number(mapped.iperf_ul_mbps||0).toFixed(2)} Mbps`);
       instPingEl && (instPingEl.textContent = mapped.ping_avg!=null ? `${Number(mapped.ping_avg).toFixed(2)} ms` : '—');
@@ -310,11 +273,11 @@
       ensureResultsChart(); addLatestPointToChart(mapped);
       updateSummary();
     }
-    // reset progreso, dejamos el live visible
+
+    // Reset progreso y buffer de muestras para la próxima prueba
     runProgressFill && (runProgressFill.style.width = `0%`);
     progressPct && (progressPct.textContent = `0%`);
     timeRemainingEl && (timeRemainingEl.textContent = '00:00');
-    // limpia el buffer de muestras para la próxima prueba
     setTimeout(()=> liveChartReset(), 500);
   }
 
@@ -374,7 +337,7 @@
     try{
       const res=await fetch('/start_survey',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ device, points, repeats, manual }) });
       const j=await res.json();
-      if(!j.ok){ surveyLog && (surveyLog.textContent='Error: '+(j.error||'')); startSurveyBtn.disabled=false; return; }
+      if(!j.ok){ surveyLog && (surveyLog.textContent='Error: ' + (j.error||'')); startSurveyBtn.disabled=false; return; }
       lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
       cancelTaskBtn && (cancelTaskBtn.disabled=false);
       liveChartReset(); showLiveVisuals(); openSseForTask(j.task_id); surveyArea && (surveyArea.hidden=false); setMode('results');
@@ -396,6 +359,7 @@
   function toCsvRow(cells){ return cells.map(c=>{ if(c==null) return ''; const s=String(c); return /[",\n]/.test(s)? `"${s.replace(/"/g,'""')}"` : s; }).join(','); }
   function groupBy(arr,key){ const m=new Map(); arr.forEach(it=>{ const k=it[key]||''; if(!m.has(k)) m.set(k,[]); m.get(k).push(it); }); return m; }
   function stats(arr){ const vals=arr.filter(v=>typeof v==='number'&&!isNaN(v)); const n=vals.length; if(!n) return {n:0,avg:null,min:null,max:null,std:null,p50:null,p95:null}; vals.sort((a,b)=>a-b); const sum=vals.reduce((a,b)=>a+b,0), avg=sum/n, min=vals[0], max=vals[n-1]; const std=Math.sqrt(vals.reduce((a,b)=>a+(b-avg)*(b-avg),0)/n); const perc=q=>{ const k=(n-1)*(q/100), f=Math.floor(k), c=Math.min(f+1,n-1); return f===c? vals[f] : vals[f]*(c-k)+vals[c]*(k-f); }; return {n,avg,min,max,std,p50:perc(50),p95:perc(95)}; }
+
   exportJsonBtn?.addEventListener('click', ()=> download('wifi_recent.json', JSON.stringify(results.slice(0,1000), null, 2), 'application/json'));
   clearResultsBtn?.addEventListener('click', ()=> { results=[]; resultsList && (resultsList.innerHTML=''); if(resultsChart){ resultsChart.data.labels=[]; resultsChart.data.datasets.forEach(ds=>ds.data=[]); resultsChart.update(); } updateSummary(); emptyState && (emptyState.style.display='block'); });
   exportCsvWideBtn?.addEventListener('click', ()=>{
@@ -434,7 +398,7 @@
   });
 
   function updateSummary(){
-    const n=v=>{ const x=Number(v); return isNaN(x)? null:x; };
+    const n=v=>{ const x=Number(v); return isNaN(x)? null : x; };
     const avg=arr=> arr.length? (arr.reduce((a,b)=>a+b,0)/arr.length) : null;
     const rssiVals=results.map(x=>n(x.rssi)).filter(v=>v!=null);
     const dlVals=results.map(x=>n(x.iperf_dl_mbps)).filter(v=>v!=null);
@@ -447,9 +411,8 @@
   }
 
   // Init mínimos
-  createGauge(0,200);
   updateSummary();
 
-  // Expose
+  // Expose (debug)
   window.__ws = Object.assign(window.__ws || {}, { ensureResultsChart, rebuildResultsChart });
 })();
