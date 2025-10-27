@@ -1,7 +1,5 @@
-// static/app.js v12 — Fix mobile cuando llegan resultados:
-// - Redimensiona el gráfico tras poblar datos (doble RAF + debounce resize/orientation)
-// - Ajustes responsivos en leyenda y ticks
-// - Llama a refreshResultsLayout() al añadir resultados
+// static/app.js v13 — Migración a Apache ECharts (live + resultados).
+// Mantiene SSE/polling, filtros, exportaciones y layout mobile-first.
 
 (() => {
   const $ = id => document.getElementById(id);
@@ -11,14 +9,6 @@
   const modeQuickBtn = $('modeQuick'), modeSurveyBtn = $('modeSurvey'), modeResultsBtn = $('modeResults');
   const goToSurveyBtn = $('btn-go-to-survey'), goToResultsBtn = $('modeResults') || $('btn-go-to-results'), goToTestsBtn = $('btn-go-to-tests');
 
-  function refreshResultsLayout() {
-    // Recalcular tamaño del gráfico tras cambios de DOM/datos
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        try { resultsChart && resultsChart.resize(); } catch(e){}
-      });
-    });
-  }
   function setMode(mode, persist = true) {
     const map = { quick: panelQuick, survey: panelSurvey, results: panelResults };
     Object.entries(map).forEach(([k,v]) => v && v.classList.toggle('hidden', k !== mode));
@@ -26,7 +16,7 @@
     if (mode === 'quick' && modeQuickBtn) modeQuickBtn.classList.add('active');
     if (mode === 'survey' && modeSurveyBtn) modeSurveyBtn.classList.add('active');
     if (mode === 'results' && modeResultsBtn) modeResultsBtn.classList.add('active');
-    if (persist) { try { localStorage.setItem('uiMode', mode); } catch(e){} }
+    if (persist) try { localStorage.setItem('uiMode', mode); } catch(e){}
     if (mode === 'results') {
       ensureResultsChart();
       refreshResultsLayout();
@@ -68,117 +58,135 @@
   let lastSurveyTaskId = null;
   let currentSse = null;
 
-  // ============ Live mini chart (estabilidad) ============
-  let liveMiniChart = null;
-  let liveSamples = []; // {t, dl, ul, ping}
+  // ===== Utils =====
+  function debounce(fn, ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
+  function download(name,text,mime='text/plain'){ const blob=new Blob([text],{type:mime}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); URL.revokeObjectURL(a.href); }
+  function toCsvRow(cells){ return cells.map(c=>{ if(c==null) return ''; const s=String(c); return /[",\n]/.test(s)? `"${s.replace(/"/g,'""')}"` : s; }).join(','); }
+  function groupBy(arr,key){ const m=new Map(); arr.forEach(it=>{ const k=it[key]||''; if(!m.has(k)) m.set(k,[]); m.get(k).push(it); }); return m; }
+  function stats(arr){
+    const vals=arr.filter(v=>typeof v==='number'&&!isNaN(v)); const n=vals.length;
+    if(!n) return {n:0,avg:null,min:null,max:null,std:null,p50:null,p95:null};
+    vals.sort((a,b)=>a-b); const sum=vals.reduce((a,b)=>a+b,0), avg=sum/n, min=vals[0], max=vals[n-1];
+    const std=Math.sqrt(vals.reduce((a,b)=>a+(b-avg)*(b-avg),0)/n);
+    const perc=q=>{ const k=(n-1)*(q/100), f=Math.floor(k), c=Math.min(f+1,n-1); return f===c? vals[f] : vals[f]*(c-k)+vals[c]*(k-f); };
+    return {n,avg,min,max,std,p50:perc(50),p95:perc(95)};
+  }
+  function refreshResultsLayout(){
+    requestAnimationFrame(()=> requestAnimationFrame(()=> {
+      try { resultsChart && resultsChart.resize(); } catch{}
+    }));
+  }
 
+  // ======================
+  // ECharts: Estabilidad en vivo
+  // ======================
+  let liveChart = null;
+  let liveSamples = []; // {t, dl, ul, ping}
   function ensureLiveMiniChart(){
-    const canvas = $('liveMiniChart'); if(!canvas) return;
-    if(liveMiniChart) return;
-    const ctx = canvas.getContext('2d');
-    liveMiniChart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: [],
-        datasets: [
-          { label:'DL', data: [], borderColor:'#0b74ff', backgroundColor:'rgba(11,116,255,0.10)', yAxisID:'y', tension:0.25, pointRadius:0, fill:true },
-          { label:'UL', data: [], borderColor:'#06b6d4', backgroundColor:'rgba(6,182,212,0.08)', yAxisID:'y', tension:0.25, pointRadius:0, fill:true },
-          { label:'Ping', data: [], borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,0.06)', yAxisID:'y1', tension:0.15, pointRadius:0, fill:false, borderDash:[4,2] }
-        ]
+    const el = $('liveMiniChart'); if(!el) return;
+    if(liveChart) return;
+    liveChart = echarts.init(el, null, {renderer:'canvas'});
+    liveChart.setOption({
+      grid:{left:40,right:46,top:28,bottom:32},
+      tooltip:{trigger:'axis'},
+      legend:{
+        top:0,
+        textStyle:{fontSize:12}
       },
-      options: {
-        responsive:true, maintainAspectRatio:false, animation:{ duration: 0 },
-        interaction:{ intersect:false, mode:'index' },
-        plugins:{ legend:{ display:true, position: (matchMedia('(max-width:680px)').matches ? 'bottom' : 'top'),
-          labels:{ boxWidth: 10, font:{ size: matchMedia('(max-width:680px)').matches ? 11 : 12 } } },
-          tooltip:{ callbacks:{ title:(items)=> items?.[0]?.label ? `t=${items[0].label}s` : '',
-          label:(it)=> `${it.dataset.label}: ${Number(it.parsed.y).toFixed(2)}` }}},
-        scales: {
-          x: { title:{display:true, text:'s'}, ticks:{ autoSkip:true, maxRotation:0, font:{ size: matchMedia('(max-width:680px)').matches ? 10 : 12 } } },
-          y: { title:{display:true, text:'Mbps'}, beginAtZero:true, ticks:{ font:{ size: matchMedia('(max-width:680px)').matches ? 10 : 12 } } },
-          y1:{ position:'right', title:{display:true, text:'ms'}, grid:{drawOnChartArea:false}, beginAtZero:true, ticks:{ font:{ size: matchMedia('(max-width:680px)').matches ? 10 : 12 } } }
-        }
-      }
+      xAxis:{ type:'category', name:'s', boundaryGap:false, data:[] },
+      yAxis:[
+        { type:'value', name:'Mbps', min:0, axisLabel:{formatter: '{value}'} },
+        { type:'value', name:'ms', min:0, axisLabel:{formatter: '{value}'} }
+      ],
+      series:[
+        { name:'DL', type:'line', smooth:true, areaStyle:{opacity:0.15}, itemStyle:{color:'#0b74ff'}, yAxisIndex:0, data:[] },
+        { name:'UL', type:'line', smooth:true, areaStyle:{opacity:0.12}, itemStyle:{color:'#06b6d4'}, yAxisIndex:0, data:[] },
+        { name:'Ping', type:'line', smooth:true, itemStyle:{color:'#ef4444'}, lineStyle:{type:'dashed'}, yAxisIndex:1, data:[] }
+      ]
     });
+    window.addEventListener('resize', ()=> liveChart && liveChart.resize());
   }
   function liveChartPush(t, dl, ul, ping){
     ensureLiveMiniChart();
-    if(!liveMiniChart) return;
+    if(!liveChart) return;
     liveSamples.push({t, dl, ul, ping});
     if(liveSamples.length > 600) liveSamples.shift();
-    liveMiniChart.data.labels = liveSamples.map(s=>s.t);
-    liveMiniChart.data.datasets[0].data = liveSamples.map(s=>s.dl ?? null);
-    liveMiniChart.data.datasets[1].data = liveSamples.map(s=>s.ul ?? null);
-    liveMiniChart.data.datasets[2].data = liveSamples.map(s=>s.ping ?? null);
-    liveMiniChart.update('none');
+    const xs = liveSamples.map(s=> s.t);
+    liveChart.setOption({
+      xAxis:{ data: xs },
+      series:[
+        { name:'DL', data: liveSamples.map(s=> s.dl ?? null) },
+        { name:'UL', data: liveSamples.map(s=> s.ul ?? null) },
+        { name:'Ping', data: liveSamples.map(s=> s.ping ?? null) }
+      ]
+    }, { notMerge:false, lazyUpdate:true });
   }
   function liveChartReset(){
     liveSamples = [];
-    if(liveMiniChart){
-      liveMiniChart.data.labels = [];
-      liveMiniChart.data.datasets.forEach(ds=>ds.data=[]);
-      liveMiniChart.update('none');
+    if(liveChart){
+      liveChart.setOption({
+        xAxis:{data:[]},
+        series:[{data:[]},{data:[]},{data:[]}]
+      }, {notMerge:true, lazyUpdate:true});
     }
   }
 
-  function showLiveVisuals(){ if(liveVisuals){ liveVisuals.classList.add('show'); ensureLiveMiniChart(); } }
-  function hideLiveVisuals(){ if(liveVisuals){ liveVisuals.classList.remove('show'); } }
-  hideLivePanelBtn && hideLivePanelBtn.addEventListener('click', hideLiveVisuals);
-  showLiveQuick && showLiveQuick.addEventListener('click', ()=> { showLiveVisuals(); setMode('results'); });
-  showLiveSurvey && showLiveSurvey.addEventListener('click', ()=> { showLiveVisuals(); setMode('results'); });
+  // ======================
+  // ECharts: Resultados
+  // ======================
+  let resultsChart = null;
+  let resultsChartEl = null;
 
-  // ============ Gráfico de Resultados (Chart.js) ============
-  let resultsChart = null; let chartRO = null;
-
-  function applyResultsChartResponsiveOptions(chart){
-    const isMobile = matchMedia('(max-width:680px)').matches;
-    chart.options.plugins.legend.position = isMobile ? 'bottom' : 'top';
-    chart.options.plugins.legend.labels.boxWidth = 10;
-    chart.options.plugins.legend.labels.font = { size: isMobile ? 11 : 12 };
-    chart.options.scales.x.ticks.font = { size: isMobile ? 10 : 12 };
-    chart.options.scales.y.ticks.font = { size: isMobile ? 10 : 12 };
-    chart.options.scales.y1.ticks.font = { size: isMobile ? 10 : 12 };
+  function getLegendSelectedFromToggles(){
+    return {
+      'DL Mbps': !!toggleDL?.checked,
+      'UL Mbps': !!toggleUL?.checked,
+      'Ping ms': !!togglePing?.checked
+    };
   }
 
   function ensureResultsChart(){
-    const canvas = $('throughputChart'); if(!canvas) return;
-    if(resultsChart) { try { applyResultsChartResponsiveOptions(resultsChart); resultsChart.resize(); } catch(e){} return; }
-    const ctx = canvas.getContext('2d');
-    resultsChart = new Chart(ctx, {
-      type: 'line',
-      data: { labels: [], datasets: [
-        { label:'DL Mbps', data: [], borderColor:'#0b74ff', backgroundColor:'rgba(11,116,255,0.08)', yAxisID:'y', tension:0.24, pointRadius:3, fill:true },
-        { label:'UL Mbps', data: [], borderColor:'#06b6d4', backgroundColor:'rgba(6,182,212,0.06)', yAxisID:'y', tension:0.24, pointRadius:3, fill:true },
-        { label:'Ping ms', data: [], borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,0.04)', yAxisID:'y1', tension:0.2, pointRadius:2, borderDash:[4,2], fill:false }
-      ]},
-      options: {
-        responsive:true, maintainAspectRatio:false, interaction:{mode:'index', intersect:false}, animation:{duration:200},
-        plugins:{ legend:{ position:'top', labels:{ boxWidth: 12 } } },
-        scales:{ x:{ title:{display:true,text:'Punto'}, ticks:{ autoSkip:true, maxRotation:0 } },
-          y:{ position:'left', title:{display:true,text:'Mbps'}, beginAtZero:true },
-          y1:{ position:'right', title:{display:true,text:'Ping (ms)'}, beginAtZero:true, grid:{drawOnChartArea:false} } }
-      }
+    resultsChartEl = $('throughputChart');
+    if(!resultsChartEl) return;
+    if(resultsChart) { try { resultsChart.resize(); } catch{} return; }
+    resultsChart = echarts.init(resultsChartEl, null, {renderer:'canvas'});
+    resultsChart.setOption({
+      grid:{left:48,right:52,top:30,bottom:42},
+      tooltip:{trigger:'axis'},
+      legend:{ top:0, selected: getLegendSelectedFromToggles(), textStyle:{fontSize:12} },
+      xAxis:{ type:'category', name:'Punto', boundaryGap:false, data:[] },
+      yAxis:[
+        { type:'value', name:'Mbps', min:0 },
+        { type:'value', name:'ms', min:0 }
+      ],
+      dataZoom:[
+        { type:'inside' },
+        { type:'slider', height:14, bottom:12 }
+      ],
+      series:[
+        { name:'DL Mbps', type:'line', smooth:true, areaStyle:{opacity:0.15}, itemStyle:{color:'#0b74ff'}, yAxisIndex:0, data:[] },
+        { name:'UL Mbps', type:'line', smooth:true, areaStyle:{opacity:0.12}, itemStyle:{color:'#06b6d4'}, yAxisIndex:0, data:[] },
+        { name:'Ping ms', type:'line', smooth:true, itemStyle:{color:'#ef4444'}, lineStyle:{type:'dashed'}, yAxisIndex:1, data:[] }
+      ]
     });
-    applyResultsChartResponsiveOptions(resultsChart);
-
-    const card = $('resultsChartCard');
-    if(card && 'ResizeObserver' in window){
-      chartRO = new ResizeObserver(()=> { try { applyResultsChartResponsiveOptions(resultsChart); resultsChart.resize(); } catch(e){} });
-      chartRO.observe(card);
-    }
-    matchMedia('(max-width:680px)').addEventListener?.('change', ()=> {
-      try { applyResultsChartResponsiveOptions(resultsChart); resultsChart.update(); } catch(e){}
-    });
-
-    rebuildResultsChart();
-    refreshResultsLayout();
+    // Resize robusto
+    const ro = new ResizeObserver(()=> { try { resultsChart.resize(); } catch{} });
+    ro.observe($('resultsChartCard') || resultsChartEl);
+    window.addEventListener('resize', debounce(()=> { try { resultsChart.resize(); } catch{} }, 120));
+    window.matchMedia('(max-width:680px)').addEventListener?.('change', ()=> { try { resultsChart.resize(); } catch{} });
   }
 
   function getFilteredSortedResults(){
     const q=(searchInput?.value||'').trim().toLowerCase();
     let arr=[...results];
-    if(q){ arr=arr.filter(r=>(r.point||'').toLowerCase().includes(q)||(r.ssid||'').toLowerCase().includes(q)||(r.device||'').toLowerCase().includes(q)); }
-    const sort=sortResultsSelect?.value||'newest';
+    if(q){
+      arr = arr.filter(r =>
+        (r.point||'').toLowerCase().includes(q) ||
+        (r.ssid||'').toLowerCase().includes(q) ||
+        (r.device||'').toLowerCase().includes(q)
+      );
+    }
+    const sort=sortResultsSelect?.value || 'newest';
     if(sort==='oldest') arr.sort((a,b)=> new Date(a.timestamp)-new Date(b.timestamp));
     else if(sort==='dl-desc') arr.sort((a,b)=> (Number(b.iperf_dl_mbps)||0)-(Number(a.iperf_dl_mbps)||0));
     else if(sort==='dl-asc') arr.sort((a,b)=> (Number(a.iperf_dl_mbps)||0)-(Number(b.iperf_dl_mbps)||0));
@@ -186,44 +194,68 @@
     return arr;
   }
 
+  function applyLegendSelectionFromToggles(){
+    if(!resultsChart) return;
+    const selected = getLegendSelectedFromToggles();
+    resultsChart.setOption({ legend:{ selected } }, {notMerge:false});
+  }
+
   function rebuildResultsChart(){
     if(!resultsChart) return;
     const arr=getFilteredSortedResults();
-    resultsChart.data.labels = arr.map(r=> r.point || new Date(r.timestamp).toLocaleTimeString());
-    resultsChart.data.datasets[0].data = arr.map(r=> Number(r.iperf_dl_mbps)||0);
-    resultsChart.data.datasets[1].data = arr.map(r=> Number(r.iperf_ul_mbps)||0);
-    resultsChart.data.datasets[2].data = arr.map(r=> Number(r.ping_avg)||0);
-    if(toggleDL) resultsChart.data.datasets[0].hidden = !toggleDL.checked;
-    if(toggleUL) resultsChart.data.datasets[1].hidden = !toggleUL.checked;
-    if(togglePing) resultsChart.data.datasets[2].hidden = !togglePing.checked;
-    resultsChart.update('active');
+    const labels = arr.map(r=> r.point || new Date(r.timestamp).toLocaleTimeString());
+    resultsChart.setOption({
+      xAxis:{ data: labels },
+      legend:{ selected: getLegendSelectedFromToggles() },
+      series:[
+        { name:'DL Mbps', data: arr.map(r=> Number(r.iperf_dl_mbps)||0) },
+        { name:'UL Mbps', data: arr.map(r=> Number(r.iperf_ul_mbps)||0) },
+        { name:'Ping ms', data: arr.map(r=> Number(r.ping_avg)||0) }
+      ]
+    }, {notMerge:false, lazyUpdate:true});
     refreshResultsLayout();
   }
 
   function addLatestPointToChart(r){
     if(!resultsChart) return;
-    resultsChart.data.labels.unshift(r.point || new Date(r.timestamp).toLocaleTimeString());
-    resultsChart.data.datasets[0].data.unshift(Number(r.iperf_dl_mbps)||0);
-    resultsChart.data.datasets[1].data.unshift(Number(r.iperf_ul_mbps)||0);
-    resultsChart.data.datasets[2].data.unshift(Number(r.ping_avg)||0);
-    const MAX_POINTS=80; while(resultsChart.data.labels.length>MAX_POINTS){ resultsChart.data.labels.pop(); resultsChart.data.datasets.forEach(ds=>ds.data.pop()); }
-    if(toggleDL) resultsChart.data.datasets[0].hidden = !toggleDL.checked;
-    if(toggleUL) resultsChart.data.datasets[1].hidden = !toggleUL.checked;
-    if(togglePing) resultsChart.data.datasets[2].hidden = !togglePing.checked;
-    resultsChart.update('active');
+    // Mantenemos "más recientes primero" como venías usando (unshift)
+    const current = resultsChart.getOption();
+    const labels = (current.xAxis?.[0]?.data || []).slice();
+    const dl = (current.series?.[0]?.data || []).slice();
+    const ul = (current.series?.[1]?.data || []).slice();
+    const ping = (current.series?.[2]?.data || []).slice();
+
+    labels.unshift(r.point || new Date(r.timestamp).toLocaleTimeString());
+    dl.unshift(Number(r.iperf_dl_mbps)||0);
+    ul.unshift(Number(r.iperf_ul_mbps)||0);
+    ping.unshift(Number(r.ping_avg)||0);
+
+    const MAX_POINTS = 80;
+    while(labels.length > MAX_POINTS){ labels.pop(); dl.pop(); ul.pop(); ping.pop(); }
+
+    resultsChart.setOption({
+      xAxis:{ data: labels },
+      series:[
+        { name:'DL Mbps', data: dl },
+        { name:'UL Mbps', data: ul },
+        { name:'Ping ms', data: ping }
+      ]
+    }, {notMerge:false, lazyUpdate:true});
+    applyLegendSelectionFromToggles();
     refreshResultsLayout();
   }
 
   // Controles resultados
-  function debounce(fn,ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms); }; }
-  toggleDL && toggleDL.addEventListener('change', rebuildResultsChart);
-  toggleUL && toggleUL.addEventListener('change', rebuildResultsChart);
-  togglePing && togglePing.addEventListener('change', rebuildResultsChart);
-  searchInput && searchInput.addEventListener('input', debounce(()=> rebuildResultsChart(),200));
+  toggleDL && toggleDL.addEventListener('change', ()=> { applyLegendSelectionFromToggles(); });
+  toggleUL && toggleUL.addEventListener('change', ()=> { applyLegendSelectionFromToggles(); });
+  togglePing && togglePing.addEventListener('change', ()=> { applyLegendSelectionFromToggles(); });
+  searchInput && searchInput.addEventListener('input', debounce(()=> rebuildResultsChart(), 200));
   sortResultsSelect && sortResultsSelect.addEventListener('change', rebuildResultsChart);
   refreshChartBtn && refreshChartBtn.addEventListener('click', rebuildResultsChart);
 
-  // ============ SSE / Polling ============
+  // ======================
+  // SSE / Polling
+  // ======================
   function openSseForTask(task_id){
     if(!task_id) return;
     if(typeof(EventSource)==='undefined'){ pollTaskStatus(task_id, 1000); return; }
@@ -273,7 +305,7 @@
     const elapsed=Number(partial.elapsed_s || 0);
 
     // Mostrar panel y actualizar mini gráfica
-    if(liveVisuals && !liveVisuals.classList.contains('show')) showLiveVisuals();
+    if(liveVisuals && !liveVisuals.classList.contains('show')) { liveVisuals.classList.add('show'); ensureLiveMiniChart(); }
     liveChartPush(elapsed, dl, ul, pingAvg);
 
     // Lecturas instantáneas
@@ -299,6 +331,7 @@
       liveSummary && (liveSummary.textContent = `Encuesta finalizada: ${res.length} puntos`);
     } else {
       const mapped = mapFinalToResult(res);
+      // Fallback: si el backend no trajo samples, usa los del frontend
       if(!mapped.samples || !mapped.samples.length){
         mapped.samples = liveSamples.map(s=>({ t:s.t, dl:s.dl, ul:s.ul, ping:s.ping }));
       }
@@ -308,8 +341,7 @@
       instPingEl && (instPingEl.textContent = mapped.ping_avg!=null ? `${Number(mapped.ping_avg).toFixed(2)} ms` : '—');
 
       pushResultToList(mapped);
-      ensureResultsChart();
-      addLatestPointToChart(mapped);
+      ensureResultsChart(); addLatestPointToChart(mapped);
       updateSummary();
     }
 
@@ -351,7 +383,6 @@
     `;
     if(resultsList) resultsList.prepend(card);
     if(emptyState) emptyState.style.display = results.length ? 'none' : 'block';
-    // Tras insertar en DOM, refrescar layout por si cambia el alto disponible
     refreshResultsLayout();
   }
 
@@ -364,9 +395,8 @@
       const j=await res.json();
       if(!j || !j.ok){ liveSummary && (liveSummary.textContent = `Error: ${j?.error||'unknown'}`); runBtn.disabled=false; return; }
       lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
-      liveChartReset(); if(liveVisuals && !liveVisuals.classList.contains('show')) showLiveVisuals();
-      liveSummary && (liveSummary.textContent='Tarea iniciada, esperando actualizaciones...');
-      openSseForTask(j.task_id); setMode('results');
+      liveChartReset(); if(liveVisuals && !liveVisuals.classList.contains('show')) { liveVisuals.classList.add('show'); ensureLiveMiniChart(); }
+      liveSummary && (liveSummary.textContent='Tarea iniciada, esperando actualizaciones...'); openSseForTask(j.task_id); setMode('results');
     }catch(e){ liveSummary && (liveSummary.textContent = `Error: ${e.message}`); } finally{ runBtn.disabled=false; }
   });
 
@@ -383,7 +413,7 @@
       if(!j.ok){ surveyLog && (surveyLog.textContent='Error: ' + (j.error||'')); startSurveyBtn.disabled=false; return; }
       lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
       cancelTaskBtn && (cancelTaskBtn.disabled=false);
-      liveChartReset(); if(liveVisuals && !liveVisuals.classList.contains('show')) showLiveVisuals();
+      liveChartReset(); if(liveVisuals && !liveVisuals.classList.contains('show')) { liveVisuals.classList.add('show'); ensureLiveMiniChart(); }
       openSseForTask(j.task_id); surveyArea && (surveyArea.hidden=false); setMode('results');
     }catch(e){ surveyLog && (surveyLog.textContent='Error al iniciar: '+e); } finally{ startSurveyBtn.disabled=false; }
   });
@@ -391,21 +421,23 @@
   // Proceed / Cancel
   proceedBtn && proceedBtn.addEventListener('click', async ()=>{
     if(!lastSurveyTaskId){ alert('No hay encuesta en curso'); return; }
-    proceedBtn.disabled=true; try{ const r=await fetch(`/task_proceed/${encodeURIComponent(lastSurveyTaskId)}`,{method:'POST'}); const js=await r.json(); if(!js.ok) alert('Error al proceder: '+(js.error||'')); }catch(e){ alert('Error: '+e); } finally{ proceedBtn.disabled=false; }
+    proceedBtn.disabled=true; try{
+      const r=await fetch(`/task_proceed/${encodeURIComponent(lastSurveyTaskId)}`,{method:'POST'}); const js=await r.json();
+      if(!js.ok) alert('Error al proceder: '+(js.error||''));
+    }catch(e){ alert('Error: '+e); } finally{ proceedBtn.disabled=false; }
   });
   cancelTaskBtn && cancelTaskBtn.addEventListener('click', async ()=>{
     if(!lastSurveyTaskId){ alert('No hay encuesta en curso'); return; }
     try{ await fetch(`/task_cancel/${encodeURIComponent(lastSurveyTaskId)}`,{method:'POST'}); }catch{}
   });
 
-  // Export helpers
-  function download(name,text,mime='text/plain'){ const blob=new Blob([text],{type:mime}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); URL.revokeObjectURL(a.href); }
-  function toCsvRow(cells){ return cells.map(c=>{ if(c==null) return ''; const s=String(c); return /[",\n]/.test(s)? `"${s.replace(/"/g,'""')}"` : s; }).join(','); }
-  function groupBy(arr,key){ const m=new Map(); arr.forEach(it=>{ const k=it[key]||''; if(!m.has(k)) m.set(k,[]); m.get(k).push(it); }); return m; }
-  function stats(arr){ const vals=arr.filter(v=>typeof v==='number'&&!isNaN(v)); const n=vals.length; if(!n) return {n:0,avg:null,min:null,max:null,std:null,p50:null,p95:null}; vals.sort((a,b)=>a-b); const sum=vals.reduce((a,b)=>a+b,0), avg=sum/n, min=vals[0], max=vals[n-1]; const std=Math.sqrt(vals.reduce((a,b)=>a+(b-avg)*(b-avg),0)/n); const perc=q=>{ const k=(n-1)*(q/100), f=Math.floor(k), c=Math.min(f+1,n-1); return f===c? vals[f] : vals[f]*(c-k)+vals[c]*(k-f); }; return {n,avg,min,max,std,p50:perc(50),p95:perc(95)}; }
-
+  // Export
   exportJsonBtn?.addEventListener('click', ()=> download('wifi_recent.json', JSON.stringify(results.slice(0,1000), null, 2), 'application/json'));
-  clearResultsBtn?.addEventListener('click', ()=> { results=[]; resultsList && (resultsList.innerHTML=''); if(resultsChart){ resultsChart.data.labels=[]; resultsChart.data.datasets.forEach(ds=>ds.data=[]); resultsChart.update(); } updateSummary(); emptyState && (emptyState.style.display='block'); });
+  clearResultsBtn?.addEventListener('click', ()=> {
+    results=[]; resultsList && (resultsList.innerHTML='');
+    if(resultsChart){ resultsChart.setOption({ xAxis:{data:[]}, series:[{data:[]},{data:[]},{data:[]}] }, {notMerge:true}); }
+    updateSummary(); emptyState && (emptyState.style.display='block');
+  });
   exportCsvWideBtn?.addEventListener('click', ()=>{
     const header=['point','n','dl_avg','dl_min','dl_max','dl_std','ul_avg','ul_min','ul_max','ul_std','ping_avg','ping_min','ping_max','ping_std','ping_p50','ping_p95','loss_avg'];
     const lines=[toCsvRow(header)];
@@ -414,7 +446,10 @@
       const sDL=stats(arr.map(x=>Number(x.iperf_dl_mbps))); const sUL=stats(arr.map(x=>Number(x.iperf_ul_mbps)));
       const pAvg=stats(arr.map(x=>Number(x.ping_avg))); const p50s=stats(arr.map(x=>Number(x.ping_p50))); const p95s=stats(arr.map(x=>Number(x.ping_p95)));
       const lossVals=arr.map(x=>Number(x.ping_loss_pct)).filter(v=>!isNaN(v)); const lossAvg=lossVals.length? lossVals.reduce((a,b)=>a+b,0)/lossVals.length : null;
-      lines.push(toCsvRow([pt,sDL.n,sDL.avg?.toFixed(4),sDL.min?.toFixed(4),sDL.max?.toFixed(4),sDL.std?.toFixed(4),sUL.avg?.toFixed(4),sUL.min?.toFixed(4),sUL.max?.toFixed(4),sUL.std?.toFixed(4),pAvg.avg?.toFixed(4),pAvg.min?.toFixed(4),pAvg.max?.toFixed(4),pAvg.std?.toFixed(4),p50s.p50?.toFixed(4),p95s.p95?.toFixed(4),lossAvg!=null?lossAvg.toFixed(4):'']));
+      lines.push(toCsvRow([pt,sDL.n,sDL.avg?.toFixed(4),sDL.min?.toFixed(4),sDL.max?.toFixed(4),sDL.std?.toFixed(4),
+        sUL.avg?.toFixed(4),sUL.min?.toFixed(4),sUL.max?.toFixed(4),sUL.std?.toFixed(4),
+        pAvg.avg?.toFixed(4),pAvg.min?.toFixed(4),pAvg.max?.toFixed(4),pAvg.std?.toFixed(4),
+        p50s.p50?.toFixed(4),p95s.p95?.toFixed(4),lossAvg!=null?lossAvg.toFixed(4):'']));
     }
     download('wifi_results_wide.csv', lines.join('\n'), 'text/csv');
   });
@@ -430,7 +465,9 @@
       const sDL=stats(arr.map(x=>Number(x.iperf_dl_mbps))); const sUL=stats(arr.map(x=>Number(x.iperf_ul_mbps)));
       const pAvg=stats(arr.map(x=>Number(x.ping_avg))); const p50s=stats(arr.map(x=>Number(x.ping_p50))); const p95s=stats(arr.map(x=>Number(x.ping_p95)));
       const lossVals=arr.map(x=>Number(x.ping_loss_pct)).filter(v=>!isNaN(v));
-      summary[pt]={ count:sDL.n, dl:{avg:sDL.avg,min:sDL.min,max:sDL.max,std:sDL.std}, ul:{avg:sUL.avg,min:sUL.min,max:sUL.max,std:sUL.std}, ping:{avg:pAvg.avg,min:pAvg.min,max:pAvg.max,std:pAvg.std,p50:p50s.p50,p95:p95s.p95}, loss_avg: lossVals.length? lossVals.reduce((a,b)=>a+b,0)/lossVals.length : null };
+      summary[pt]={ count:sDL.n, dl:{avg:sDL.avg,min:sDL.min,max:sDL.max,std:sDL.std}, ul:{avg:sUL.avg,min:sUL.min,max:sUL.max,std:sUL.std},
+        ping:{avg:pAvg.avg,min:pAvg.min,max:pAvg.max,std:pAvg.std,p50:p50s.p50,p95:p95s.p95},
+        loss_avg: lossVals.length? lossVals.reduce((a,b)=>a+b,0)/lossVals.length : null };
     }
     download('wifi_summary.json', JSON.stringify(summary,null,2), 'application/json');
   });
@@ -458,15 +495,11 @@
     avgPing && (avgPing.textContent = pingVals.length ? avg(pingVals).toFixed(2)+' ms' : '—');
   }
 
-  // Ajustes de layout en cambios de tamaño/orientación/visibilidad
-  const debouncedRefresh = debounce(refreshResultsLayout, 150);
-  window.addEventListener('resize', debouncedRefresh);
-  window.addEventListener('orientationchange', debouncedRefresh);
-  document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'visible') debouncedRefresh(); });
-
   // Init mínimos
   updateSummary();
 
   // Expose (debug)
-  window.__ws = Object.assign(window.__ws || {}, { ensureResultsChart, rebuildResultsChart, refreshResultsLayout });
+  window.__ws = Object.assign(window.__ws || {}, {
+    ensureResultsChart, rebuildResultsChart
+  });
 })();
