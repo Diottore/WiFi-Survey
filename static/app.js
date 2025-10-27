@@ -1,14 +1,12 @@
-// static/app.js v6 — Tacómetro con etiquetas sobre las líneas (ticks) y escala "nice" estable.
-// Mantiene SSE/polling y resto de lógica. Ángulo configurable.
+// static/app.js v7 — Resultados pulidos con gráfico restaurado (Chart.js), filtros y orden.
+// Mantiene tacómetro custom (v6), SSE/polling y exportaciones.
 
 (() => {
   const $ = id => document.getElementById(id);
 
-  // Ángulo y barrido del tacómetro (grados)
-  //  - Ookla-like: start=210, sweep=240
-  //  - Semicírculo: start=180, sweep=180
-  const GAUGE_START_DEG = 180;
-  const GAUGE_SWEEP_DEG = 240;
+  // Config tacómetro
+  const GAUGE_START_DEG = Number(localStorage.getItem('gaugeStartDeg') ?? 180); // como lo dejaste
+  const GAUGE_SWEEP_DEG = Number(localStorage.getItem('gaugeSweepDeg') ?? 240);
 
   // Panels / Mode
   const panelQuick = $('panel-quick'), panelSurvey = $('panel-survey'), panelResults = $('panel-results');
@@ -23,6 +21,7 @@
     if (mode === 'survey' && modeSurveyBtn) modeSurveyBtn.classList.add('active');
     if (mode === 'results' && modeResultsBtn) modeResultsBtn.classList.add('active');
     if (persist) try { localStorage.setItem('uiMode', mode); } catch(e){}
+    if (mode === 'results') ensureResultsChart();
   }
   modeQuickBtn && modeQuickBtn.addEventListener('click', ()=> setMode('quick'));
   modeSurveyBtn && modeSurveyBtn.addEventListener('click', ()=> setMode('survey'));
@@ -32,7 +31,7 @@
   goToTestsBtn && goToTestsBtn.addEventListener('click', ()=> setMode('quick'));
   setMode(localStorage.getItem('uiMode') || 'quick', false);
 
-  // Elements
+  // Elements comunes
   const deviceEl = $('device'), pointEl = $('point'), runEl = $('run'), runBtn = $('runBtn');
   const pointsEl = $('points'), repeatsEl = $('repeats');
   const startSurveyBtn = $('startSurvey'), cancelTaskBtn = $('cancelTask');
@@ -43,8 +42,7 @@
   const liveVisuals = $('liveVisuals');
   const speedGaugeCanvas = $('speedGauge');
   const speedValEl = $('speedVal'), speedUnitEl = $('speedUnit');
-  const gaugeLabel = $('gaugeLabel'); // compat
-  const gaugeScaleLabel = $('gaugeScaleLabel'); // línea vieja de escala (la ocultaremos)
+  const gaugeLabel = $('gaugeLabel');
   const runProgressFill = $('runProgressFill');
   const progressPct = $('progressPct');
   const timeRemainingEl = $('timeRemaining');
@@ -54,26 +52,22 @@
   const showLiveQuick = $('showLiveQuick'), showLiveSurvey = $('showLiveSurvey'), hideLivePanelBtn = $('hideLivePanel');
   const surveyDeviceEl = $('survey_device'), manualCheckbox = $('manual_confirm'), proceedBtn = $('proceedBtn');
 
-  // Oculta la línea antigua de números bajo el gauge
-  if (gaugeScaleLabel) gaugeScaleLabel.style.display = 'none';
+  // Resultados - controles
+  const searchInput = $('searchInput');
+  const toggleDL = $('toggleDL'), toggleUL = $('toggleUL'), togglePing = $('togglePing');
+  const refreshChartBtn = $('refreshChartBtn'), sortResultsSelect = $('sortResultsSelect');
 
-  // State
-  let results = [], lastSurveyTaskId = null, currentSse = null;
+  // Export
+  const exportJsonBtn = $('exportJsonBtn'), clearResultsBtn = $('clearResultsBtn');
+  const exportCsvWideBtn = $('exportCsvWide'), exportCsvLongBtn = $('exportCsvLong'), exportSummaryJsonBtn = $('exportSummaryJson');
 
-  // Optional chart
-  const ctx = document.getElementById('throughputChart')?.getContext('2d');
-  const chart = ctx ? new Chart(ctx, {
-    type: 'line',
-    data: { labels: [], datasets: [
-      { label: 'DL Mbps', data: [], borderColor: '#0b74ff', backgroundColor: 'rgba(11,116,255,0.08)', yAxisID: 'y', tension: 0.24, pointRadius: 4, fill: true },
-      { label: 'UL Mbps', data: [], borderColor: '#06b6d4', backgroundColor: 'rgba(6,182,212,0.06)', yAxisID: 'y', tension: 0.24, pointRadius: 4, fill: true },
-      { label: 'Ping ms', data: [], borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.04)', yAxisID: 'y1', tension: 0.2, pointRadius: 3, borderDash: [4,2], fill: false }
-    ] },
-    options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index', intersect:false}, plugins:{legend:{position:'top'}}, scales:{ x:{title:{display:true,text:'Punto'}}, y:{beginAtZero:true}, y1:{beginAtZero:true, grid:{drawOnChartArea:false}} } }
-  }) : null;
+  // Estado
+  let results = [];                 // acumulado en memoria
+  let lastSurveyTaskId = null;
+  let currentSse = null;
 
   // ======================
-  // Speedometer (canvas) con etiquetas sobre los ticks
+  // Tacómetro (canvas)
   // ======================
   class Speedometer {
     constructor(canvas, opts = {}) {
@@ -81,13 +75,11 @@
       this.ctx = canvas.getContext('2d');
       this.value = 0;
       this.animVal = 0;
-      this.max = opts.max || 200;         // rango interno animado
+      this.max = opts.max || 200;
       this.displayStep = this.niceStep(this.max, 6);
-      this.displayMax = this.displayStep * 6; // escala visible (7 etiquetas: 0..6)
-      this.observedPeak = 0;              // pico observado para autoescalado estable
-
-      this.min = 0;
-      this.startDeg = Number(opts.startDeg ?? 210);
+      this.displayMax = this.displayStep * 6;
+      this.observedPeak = 0;
+      this.startDeg = Number(opts.startDeg ?? 180);
       this.sweepDeg = Number(opts.sweepDeg ?? 240);
       this.pixelRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
       this._raf = null;
@@ -96,203 +88,230 @@
       this._resizeObserver.observe(canvas.parentElement || canvas);
       this.resize();
     }
-
     toRad(deg){ return deg * Math.PI / 180; }
-
-    // Elegir un "nice step" con 1/2/5 * 10^n
-    niceStep(max, majors = 6) {
-      const step = Math.max(1, max / majors);
+    niceStep(max, majors=6){
+      const step = Math.max(1, max/majors);
       const pow = Math.pow(10, Math.floor(Math.log10(step)));
       const base = step / pow;
-      let n;
-      if (base <= 1) n = 1;
-      else if (base <= 2) n = 2;
-      else if (base <= 5) n = 5;
-      else n = 10;
+      const n = base<=1?1:base<=2?2:base<=5?5:10;
       return n * pow;
     }
-
-    // Límite superior "bonito" para el pico
-    niceMaxFor(v) {
-      const step = this.niceStep(v, 6);
-      return step * 6;
+    niceMaxFor(v){ const step = this.niceStep(v,6); return step*6; }
+    formatValue(val){
+      if(val>=1000){ const g=val/1000; return {num: g>=10? String(Math.round(g)) : g.toFixed(1), unit:'Gbps'}; }
+      return {num: Number(val).toFixed(val>=100?1:2), unit:'Mbps'};
     }
-
-    formatValue(val) {
-      if (val >= 1000) {
-        const g = val / 1000;
-        return { num: g >= 10 ? Math.round(g).toString() : g.toFixed(1), unit: 'Gbps' };
-      }
-      return { num: Number(val).toFixed(val >= 100 ? 1 : 2), unit: 'Mbps' };
-    }
-
-    formatTick(val) {
-      if (val >= 1000) {
-        const k = val / 1000;
-        return k >= 10 ? `${Math.round(k)}k` : `${k.toFixed(1)}k`;
-      }
-      return String(Math.round(val));
-    }
-
-    set(value) {
-      this.value = Math.max(0, Number(value) || 0);
-      // actualizar pico y targetMax "nice"
+    set(v){
+      this.value = Math.max(0, Number(v)||0);
       this.observedPeak = Math.max(this.observedPeak, this.value);
       const targetMax = this.niceMaxFor(this.observedPeak);
-      // easing del rango interno
-      this.max += (targetMax - this.max) * 0.12;
-
-      // recalcular escala visible con step "nice"
-      this.displayStep = this.niceStep(this.max, 6);
-      this.displayMax = this.displayStep * 6;
-
-      if (!this._raf) this._raf = requestAnimationFrame((ts)=>this.draw(ts));
+      this.max += (targetMax - this.max)*0.12;
+      this.displayStep = this.niceStep(this.max,6);
+      this.displayMax = this.displayStep*6;
+      if(!this._raf) this._raf = requestAnimationFrame(ts=>this.draw(ts));
     }
-
-    resize() {
+    resize(){
       const box = this.canvas.getBoundingClientRect();
       const pr = this.pixelRatio;
       const w = Math.max(320, Math.round(box.width)) || 360;
       const h = Math.round(w * 0.62);
-      this.canvas.width = Math.round(w * pr);
-      this.canvas.height = Math.round(h * pr);
-      this.canvas.style.width = w + 'px';
-      this.canvas.style.height = h + 'px';
-      this.cx = this.canvas.width / 2;
-      this.cy = this.canvas.height * 0.95;
-      this.radius = Math.min(this.cx, this.canvas.height * 0.9) * 0.92;
-      this.thickness = Math.max(12, this.radius * 0.12);
-      this.tickLenMajor = this.thickness * 0.9;
-      this.tickLenMinor = this.thickness * 0.55;
-      this.fontBase = Math.max(10, this.canvas.width * 0.035);
-      this._raf = this._raf || requestAnimationFrame((ts)=>this.draw(ts));
+      this.canvas.width = Math.round(w*pr);
+      this.canvas.height = Math.round(h*pr);
+      this.canvas.style.width = w+'px';
+      this.canvas.style.height = h+'px';
+      this.cx = this.canvas.width/2;
+      this.cy = this.canvas.height*0.95;
+      this.radius = Math.min(this.cx, this.canvas.height*0.9)*0.92;
+      this.thickness = Math.max(12, this.radius*0.12);
+      this.tickLenMajor = this.thickness*0.9;
+      this.tickLenMinor = this.thickness*0.55;
+      this.fontBase = Math.max(10, this.canvas.width*0.035);
+      this._raf = this._raf || requestAnimationFrame(ts=>this.draw(ts));
     }
-
-    stop() { if (this._raf) cancelAnimationFrame(this._raf); this._raf = null; }
-
-    draw(ts) {
-      const ctx = this.ctx;
-      const pr = this.pixelRatio;
-      const dt = Math.min(0.08, (ts - this._lastTs) / 1000 || 0.016);
-      this._lastTs = ts;
+    draw(ts){
+      const ctx = this.ctx; const pr = this.pixelRatio;
+      const dt = Math.min(0.08, (ts - this._lastTs)/1000 || 0.016); this._lastTs = ts;
       this.animVal += (this.value - this.animVal) * Math.min(1, dt*5);
 
-      const startA = this.toRad(this.startDeg);
-      const endA = startA + this.toRad(this.sweepDeg);
-
+      const startA = this.toRad(this.startDeg), endA = startA + this.toRad(this.sweepDeg);
       ctx.clearRect(0,0,this.canvas.width,this.canvas.height);
-      ctx.save();
-      ctx.translate(this.cx, this.cy);
+      ctx.save(); ctx.translate(this.cx, this.cy);
 
-      // TRACK
-      ctx.lineCap = 'round';
-      ctx.lineWidth = this.thickness;
-      ctx.strokeStyle = 'rgba(15, 23, 42, 0.08)';
-      ctx.beginPath();
-      ctx.arc(0,0,this.radius, startA, endA);
-      ctx.stroke();
+      // track
+      ctx.lineCap='round'; ctx.lineWidth=this.thickness; ctx.strokeStyle='rgba(15,23,42,0.08)';
+      ctx.beginPath(); ctx.arc(0,0,this.radius,startA,endA); ctx.stroke();
 
-      // PROGRESO
-      const f = Math.max(0, Math.min(1, this.animVal / this.displayMax));
-      const grad = ctx.createLinearGradient(-this.radius, 0, this.radius, 0);
-      grad.addColorStop(0.00, '#06b6d4');
-      grad.addColorStop(0.55, '#0b74ff');
-      grad.addColorStop(1.00, '#7c3aed');
-      ctx.strokeStyle = grad;
-      ctx.shadowColor = 'rgba(12, 74, 110, 0.35)';
-      ctx.shadowBlur = Math.max(6*pr, this.thickness*0.6);
-      ctx.beginPath();
-      ctx.arc(0,0,this.radius, startA, startA + f*(endA-startA));
-      ctx.stroke();
-      ctx.shadowBlur = 0;
+      // progreso
+      const f = Math.max(0, Math.min(1, this.animVal/this.displayMax));
+      const grad = ctx.createLinearGradient(-this.radius,0,this.radius,0);
+      grad.addColorStop(0,'#06b6d4'); grad.addColorStop(0.55,'#0b74ff'); grad.addColorStop(1,'#7c3aed');
+      ctx.strokeStyle = grad; ctx.shadowColor='rgba(12,74,110,0.35)'; ctx.shadowBlur = Math.max(6*pr, this.thickness*0.6);
+      ctx.beginPath(); ctx.arc(0,0,this.radius, startA, startA + f*(endA-startA)); ctx.stroke(); ctx.shadowBlur=0;
 
-      // TICKS
-      const majors = 6;  // 7 marcas
-      const minors = 4;
-      ctx.lineWidth = Math.max(2*pr, this.thickness*0.14);
-      ctx.strokeStyle = 'rgba(15, 23, 42, 0.22)';
-
-      for (let i=0;i<=majors;i++){
-        const frac = i/majors;
-        const a = startA + frac*(endA-startA);
-        const r1 = this.radius + this.thickness*0.05;
-        const r2 = r1 + this.tickLenMajor;
-        // mayor
-        ctx.beginPath();
-        ctx.moveTo(r1*Math.cos(a), r1*Math.sin(a));
-        ctx.lineTo(r2*Math.cos(a), r2*Math.sin(a));
-        ctx.stroke();
-
-        // menores entre marcas
-        if (i<majors){
-          for (let m=1;m<minors;m++){
-            const frac2 = (i + m/minors)/majors;
-            const a2 = startA + frac2*(endA-startA);
-            const r3 = this.radius + this.thickness*0.05;
-            const r4 = r3 + this.tickLenMinor;
-            ctx.beginPath();
-            ctx.moveTo(r3*Math.cos(a2), r3*Math.sin(a2));
-            ctx.lineTo(r4*Math.cos(a2), r4*Math.sin(a2));
-            ctx.stroke();
+      // ticks
+      const majors=6, minors=4; ctx.lineWidth=Math.max(2*pr, this.thickness*0.14); ctx.strokeStyle='rgba(15,23,42,0.22)';
+      for(let i=0;i<=majors;i++){
+        const frac=i/majors, a=startA + frac*(endA-startA);
+        const r1=this.radius + this.thickness*0.05, r2=r1 + this.tickLenMajor;
+        ctx.beginPath(); ctx.moveTo(r1*Math.cos(a), r1*Math.sin(a)); ctx.lineTo(r2*Math.cos(a), r2*Math.sin(a)); ctx.stroke();
+        if(i<majors){
+          for(let m=1;m<minors;m++){
+            const frac2=(i+m/minors)/majors, a2=startA + frac2*(endA-startA);
+            const r3=this.radius + this.thickness*0.05, r4=r3 + this.tickLenMinor;
+            ctx.beginPath(); ctx.moveTo(r3*Math.cos(a2), r3*Math.sin(a2)); ctx.lineTo(r4*Math.cos(a2), r4*Math.sin(a2)); ctx.stroke();
           }
         }
       }
-
-      // ETIQUETAS SOBRE LOS TICKS MAYORES
-      const fontPx = Math.max(10, this.fontBase * 0.75);
-      ctx.fillStyle = '#111827';
+      // etiquetas sobre ticks
+      const fontPx=Math.max(10,this.fontBase*0.75); ctx.fillStyle='#111827';
       ctx.font = `600 ${fontPx}px Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const labelR = this.radius + this.thickness*1.55; // posicionar sobre el extremo de los ticks
-
-      for (let i=0;i<=majors;i++){
-        const val = i * this.displayStep;
-        const text = this.formatTick(val);
-        const frac = i/majors;
-        const a = startA + frac*(endA-startA);
-        const x = labelR * Math.cos(a);
-        const y = labelR * Math.sin(a);
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      const labelR = this.radius + this.thickness*1.55;
+      for(let i=0;i<=majors;i++){
+        const val = i*(this.displayStep);
+        const text = val>=1000 ? ((val/1000)>=10 ? `${Math.round(val/1000)}k` : `${(val/1000).toFixed(1)}k`) : String(Math.round(val));
+        const frac=i/majors, a=startA + frac*(endA-startA);
+        const x=labelR*Math.cos(a), y=labelR*Math.sin(a);
         ctx.fillText(text, x, y);
       }
 
       ctx.restore();
 
-      // READOUT
-      const {num, unit} = this.formatValue(this.animVal);
-      if (speedValEl) speedValEl.textContent = num;
-      if (speedUnitEl) speedUnitEl.textContent = unit;
-      if (gaugeLabel)  gaugeLabel.textContent = `${Number(this.animVal).toFixed(2)} Mbps`;
+      const {num, unit}=this.formatValue(this.animVal);
+      speedValEl && (speedValEl.textContent=num);
+      speedUnitEl && (speedUnitEl.textContent=unit);
+      gaugeLabel && (gaugeLabel.textContent = `${Number(this.animVal).toFixed(2)} Mbps`);
 
-      if (Math.abs(this.value - this.animVal) > 0.01) {
-        this._raf = requestAnimationFrame((t)=>this.draw(t));
-      } else {
-        this._raf = null;
-      }
+      if(Math.abs(this.value - this.animVal) > 0.01) this._raf=requestAnimationFrame(t=>this.draw(t));
+      else this._raf=null;
     }
   }
-
-  let speedo = null;
+  let speedo=null;
   function showLiveVisuals(){ if(liveVisuals){ liveVisuals.classList.add('show'); createGauge(0,200); } }
   function hideLiveVisuals(){ if(liveVisuals){ liveVisuals.classList.remove('show'); } }
   $('hideLivePanel')?.addEventListener('click', hideLiveVisuals);
   showLiveQuick?.addEventListener('click', ()=> { showLiveVisuals(); setMode('results'); });
   showLiveSurvey?.addEventListener('click', ()=> { showLiveVisuals(); setMode('results'); });
-
   function createGauge(initial=0, max=200){
     if(!speedGaugeCanvas) return null;
-    if (!speedo) speedo = new Speedometer(speedGaugeCanvas, {
-      max,
-      startDeg: GAUGE_START_DEG,
-      sweepDeg: GAUGE_SWEEP_DEG
+    if(!speedo) speedo = new Speedometer(speedGaugeCanvas, {max, startDeg:GAUGE_START_DEG, sweepDeg:GAUGE_SWEEP_DEG});
+    setGaugeValue(initial); return speedo;
+  }
+  function setGaugeValue(v){ if(!speedo) createGauge(0,200); speedo && speedo.set(Number(v)||0); }
+
+  // ======================
+  // Gráfico de Resultados (Chart.js)
+  // ======================
+  let resultsChart = null;
+  let chartRO = null;
+  function ensureResultsChart(){
+    const canvas = $('throughputChart'); if(!canvas) return;
+    if(resultsChart) { resultsChart.resize(); return; }
+
+    const ctx = canvas.getContext('2d');
+    resultsChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          { label: 'DL Mbps', data: [], borderColor: '#0b74ff', backgroundColor:'rgba(11,116,255,0.08)', yAxisID:'y', tension:0.24, pointRadius:3, fill:true },
+          { label: 'UL Mbps', data: [], borderColor: '#06b6d4', backgroundColor:'rgba(6,182,212,0.06)', yAxisID:'y', tension:0.24, pointRadius:3, fill:true },
+          { label: 'Ping ms', data: [], borderColor: '#ef4444', backgroundColor:'rgba(239,68,68,0.04)', yAxisID:'y1', tension:0.2, pointRadius:2, borderDash:[4,2], fill:false }
+        ]
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        interaction:{mode:'index', intersect:false},
+        plugins:{ legend:{ position:'top' }, tooltip:{ callbacks:{
+          title:(items)=> items?.[0]?.label || '',
+          label:(item)=> `${item.dataset.label}: ${Number(item.parsed.y).toFixed(item.dataset.yAxisID==='y'?2:2)}`
+        }}},
+        scales:{
+          x:{ title:{display:true,text:'Punto'}, ticks:{ autoSkip:true, maxRotation:0 } },
+          y:{ position:'left', title:{display:true,text:'Mbps'}, beginAtZero:true },
+          y1:{ position:'right', title:{display:true,text:'Ping (ms)'}, beginAtZero:true, grid:{drawOnChartArea:false} }
+        }
+      }
     });
-    setGaugeValue(initial);
-    return speedo;
+
+    // ResizeObserver para que nunca quede en 0x0 al mostrar el panel
+    const card = $('resultsChartCard');
+    if(card && 'ResizeObserver' in window){
+      chartRO = new ResizeObserver(()=> { try { resultsChart.resize(); } catch(e){} });
+      chartRO.observe(card);
+    }
+    // Inicializar con los datos actuales (si hay)
+    rebuildResultsChart();
   }
-  function setGaugeValue(v){
-    if(!speedo) createGauge(0, 200);
-    speedo && speedo.set(Number(v) || 0);
+
+  function getFilteredSortedResults(){
+    const q = (searchInput?.value || '').trim().toLowerCase();
+    let arr = [...results];
+    if(q){
+      arr = arr.filter(r =>
+        (r.point||'').toLowerCase().includes(q) ||
+        (r.ssid||'').toLowerCase().includes(q) ||
+        (r.device||'').toLowerCase().includes(q)
+      );
+    }
+    const sort = sortResultsSelect?.value || 'newest';
+    if(sort === 'oldest') arr.sort((a,b)=> new Date(a.timestamp) - new Date(b.timestamp));
+    else if(sort === 'dl-desc') arr.sort((a,b)=> (Number(b.iperf_dl_mbps)||0) - (Number(a.iperf_dl_mbps)||0));
+    else if(sort === 'dl-asc') arr.sort((a,b)=> (Number(a.iperf_dl_mbps)||0) - (Number(b.iperf_dl_mbps)||0));
+    else arr.sort((a,b)=> new Date(b.timestamp) - new Date(a.timestamp));
+    return arr;
   }
+
+  function rebuildResultsChart(){
+    if(!resultsChart) return;
+    const arr = getFilteredSortedResults();
+
+    const labels = arr.map(r => r.point || new Date(r.timestamp).toLocaleTimeString());
+    const dl = arr.map(r => Number(r.iperf_dl_mbps)||0);
+    const ul = arr.map(r => Number(r.iperf_ul_mbps)||0);
+    const ping = arr.map(r => Number(r.ping_avg)||0);
+
+    resultsChart.data.labels = labels;
+    resultsChart.data.datasets[0].data = dl;
+    resultsChart.data.datasets[1].data = ul;
+    resultsChart.data.datasets[2].data = ping;
+
+    // toggles
+    if(toggleDL) resultsChart.data.datasets[0].hidden = !toggleDL.checked;
+    if(toggleUL) resultsChart.data.datasets[1].hidden = !toggleUL.checked;
+    if(togglePing) resultsChart.data.datasets[2].hidden = !togglePing.checked;
+
+    resultsChart.update('active');
+  }
+
+  function addLatestPointToChart(r){
+    if(!resultsChart) return;
+    // Insertar al inicio (mostramos más recientes primero)
+    resultsChart.data.labels.unshift(r.point || new Date(r.timestamp).toLocaleTimeString());
+    resultsChart.data.datasets[0].data.unshift(Number(r.iperf_dl_mbps)||0);
+    resultsChart.data.datasets[1].data.unshift(Number(r.iperf_ul_mbps)||0);
+    resultsChart.data.datasets[2].data.unshift(Number(r.ping_avg)||0);
+    const MAX_POINTS = 80;
+    while(resultsChart.data.labels.length > MAX_POINTS){
+      resultsChart.data.labels.pop();
+      resultsChart.data.datasets.forEach(ds=>ds.data.pop());
+    }
+    // respetar toggles
+    if(toggleDL) resultsChart.data.datasets[0].hidden = !toggleDL.checked;
+    if(toggleUL) resultsChart.data.datasets[1].hidden = !toggleUL.checked;
+    if(togglePing) resultsChart.data.datasets[2].hidden = !togglePing.checked;
+    resultsChart.update('active');
+  }
+
+  // Eventos de gráfico/controles
+  toggleDL && toggleDL.addEventListener('change', rebuildResultsChart);
+  toggleUL && toggleUL.addEventListener('change', rebuildResultsChart);
+  togglePing && togglePing.addEventListener('change', rebuildResultsChart);
+  searchInput && searchInput.addEventListener('input', debounce(()=> rebuildResultsChart(), 200));
+  sortResultsSelect && sortResultsSelect.addEventListener('change', rebuildResultsChart);
+  refreshChartBtn && refreshChartBtn.addEventListener('click', rebuildResultsChart);
+
+  function debounce(fn, ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
 
   // ======================
   // SSE / Polling (igual)
@@ -364,41 +383,28 @@
   function handleFinalResult(res){
     if(!res){ liveSummary && (liveSummary.textContent = 'Prueba finalizada (sin resultado)'); return; }
     if(Array.isArray(res)){
-      res.forEach(r => pushResultToList(mapFinalToResult(r)));
+      res.forEach(r => {
+        const mapped = mapFinalToResult(r);
+        pushResultToList(mapped);
+      });
+      rebuildResultsChart();
       liveSummary && (liveSummary.textContent = `Encuesta finalizada: ${res.length} puntos`);
     } else {
       const mapped = mapFinalToResult(res);
+      // animación gauge pequeña
       const dl = Number(mapped.iperf_dl_mbps || 0);
-      // animación final hacia el valor definitivo
       const start = speedo ? speedo.animVal : 0;
       const target = Math.max(start, dl);
       const steps = 24; let i=0;
-      const anim = setInterval(()=>{
-        i++; const t = i/steps;
-        setGaugeValue(start + (target-start)*(1 - Math.cos(Math.PI*t))/2);
-        if(i>=steps) clearInterval(anim);
-      }, 18);
+      const anim = setInterval(()=>{ i++; const t = i/steps; setGaugeValue(start + (target-start)*(1 - Math.cos(Math.PI*t))/2); if(i>=steps) clearInterval(anim); }, 18);
 
       instDlEl && (instDlEl.textContent = `${dl.toFixed(2)} Mbps`);
       instUlEl && (instUlEl.textContent = `${Number(mapped.iperf_ul_mbps||0).toFixed(2)} Mbps`);
       instPingEl && (instPingEl.textContent = mapped.ping_avg!=null ? `${Number(mapped.ping_avg).toFixed(2)} ms` : '—');
-      instPing50El && (instPing50El.textContent = mapped.ping_p50!=null ? `${Number(mapped.ping_p50).toFixed(2)} ms` : '—');
-      instPing95El && (instPing95El.textContent = mapped.ping_p95!=null ? `${Number(mapped.ping_p95).toFixed(2)} ms` : '—');
-      instLossEl && (instLossEl.textContent = mapped.ping_loss_pct!=null ? `${Number(mapped.ping_loss_pct).toFixed(2)} %` : '—');
 
-      liveSummary && (liveSummary.textContent = `Resultado final: DL ${dl.toFixed(2)} Mbps · UL ${Number(mapped.iperf_ul_mbps||0).toFixed(2)} Mbps`);
       pushResultToList(mapped);
-
-      if(chart){
-        const label = mapped.point || ('pt'+Date.now());
-        chart.data.labels.unshift(label);
-        chart.data.datasets[0].data.unshift(Number(mapped.iperf_dl_mbps)||0);
-        chart.data.datasets[1].data.unshift(Number(mapped.iperf_ul_mbps)||0);
-        chart.data.datasets[2].data.unshift(Number(mapped.ping_avg)||0);
-        const MAX_POINTS = 40;
-        if(chart.data.labels.length > MAX_POINTS){ chart.data.labels.pop(); chart.data.datasets.forEach(ds=>ds.data.pop()); }
-        chart.update('active');
-      }
+      ensureResultsChart();
+      addLatestPointToChart(mapped);
       updateSummary();
     }
     runProgressFill && (runProgressFill.style.width = `0%`);
@@ -510,10 +516,7 @@
     try { await fetch(`/task_cancel/${encodeURIComponent(lastSurveyTaskId)}`, { method:'POST' }); } catch(e){ console.warn('Cancel error', e); }
   });
 
-  // Export / Clear (si tienes los botones)
-  const exportJsonBtn = $('exportJsonBtn'), clearResultsBtn = $('clearResultsBtn');
-  const exportCsvWideBtn = $('exportCsvWide'), exportCsvLongBtn = $('exportCsvLong'), exportSummaryJsonBtn = $('exportSummaryJson');
-
+  // Export
   function download(name, text, mime='text/plain'){
     const blob = new Blob([text], {type:mime});
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); URL.revokeObjectURL(a.href);
@@ -532,7 +535,7 @@
     const n = vals.length;
     if(!n) return {n:0, avg:null, min:null, max:null, std:null, p50:null, p95:null};
     vals.sort((a,b)=>a-b);
-    const sum = vals.reduce((a,b)=>a+b,0), avg = sum/n, min = vals[0], max=vals[n-1];
+    const sum = vals.reduce((a,b)=>a+b,0), avg = sum/n, min=vals[0], max=vals[n-1];
     const std = Math.sqrt(vals.reduce((a,b)=>a+(b-avg)*(b-avg),0)/n);
     const perc = (q)=>{ const k=(n-1)*(q/100), f=Math.floor(k), c=Math.min(f+1,n-1); return f===c? vals[f] : vals[f]*(c-k)+vals[c]*(k-f); };
     return {n, avg, min, max, std, p50:perc(50), p95:perc(95)};
@@ -582,7 +585,7 @@
     download('wifi_summary.json', JSON.stringify(summary, null, 2), 'application/json');
   }
   exportJsonBtn?.addEventListener('click', ()=> download('wifi_recent.json', JSON.stringify(results.slice(0,1000), null, 2), 'application/json'));
-  clearResultsBtn?.addEventListener('click', ()=> { results=[]; resultsList && (resultsList.innerHTML=''); if(chart){ chart.data.labels=[]; chart.data.datasets.forEach(ds=>ds.data=[]); chart.update(); } updateSummary(); });
+  clearResultsBtn?.addEventListener('click', ()=> { results=[]; resultsList && (resultsList.innerHTML=''); if(resultsChart){ resultsChart.data.labels=[]; resultsChart.data.datasets.forEach(ds=>ds.data=[]); resultsChart.update(); } updateSummary(); });
   exportCsvWideBtn?.addEventListener('click', exportCsvWide);
   exportCsvLongBtn?.addEventListener('click', exportCsvLong);
   exportSummaryJsonBtn?.addEventListener('click', exportSummaryJson);
@@ -600,10 +603,10 @@
     avgPing && (avgPing.textContent = pingVals.length ? avg(pingVals).toFixed(2) + ' ms' : '—');
   }
 
-  // Init gauge display text
+  // Init mínimos
   createGauge(0,200);
   updateSummary();
 
   // Expose for debug
-  window.__ws = Object.assign(window.__ws || {}, { createGauge, setGaugeValue, openSseForTask });
+  window.__ws = Object.assign(window.__ws || {}, { createGauge, setGaugeValue, openSseForTask, rebuildResultsChart, ensureResultsChart });
 })();
