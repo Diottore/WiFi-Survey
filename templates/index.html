@@ -67,11 +67,6 @@
       #liveVisuals { flex-direction:column; }
       .summary-card { max-width:100%; width:100%; }
     }
-
-    @media (max-width:520px){
-      .top-actions { gap:6px; }
-      .mode-switch { display:none; } /* small screen uses panels buttons */
-    }
   </style>
 </head>
 <body>
@@ -90,7 +85,8 @@
           <button id="modeQuick" class="mode-btn active" aria-pressed="true">Quick</button>
           <button id="modeSurvey" class="mode-btn" aria-pressed="false">Survey</button>
         </div>
-        <!-- Siempre visible: botón para ir a Resultados -->
+        <!-- Botones siempre visibles -->
+        <button id="btn-go-to-survey" class="nav-btn" title="Ir a Encuesta">Encuesta</button>
         <button id="btn-go-to-results" class="nav-btn" title="Ver resultados">Resultados</button>
       </div>
     </header>
@@ -130,8 +126,8 @@
         </section>
       </section>
 
-      <!-- Survey panel -->
-      <section id="panel-survey" class="panel hidden">
+      <!-- Survey panel (NO oculto por defecto) -->
+      <section id="panel-survey" class="panel">
         <section class="card">
           <div style="display:flex;justify-content:space-between;align-items:center;">
             <div>

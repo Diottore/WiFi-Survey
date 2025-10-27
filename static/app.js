@@ -1,5 +1,5 @@
-// static/app.js - UI mejorada: separación Quick / Survey, live visuals mostradas solo al ejecutar.
-// Mantiene SSE/polling y lógica previa. Ajusta visualización y modulariza inicialización del gauge.
+// static/app.js - UI mejorada: ensure Survey panel is always accessible (mode switch visible and persistent).
+// Mantiene SSE/polling y lógica previa. Guarda modo en localStorage.
 
 (() => {
   const $ = id => document.getElementById(id);
@@ -7,32 +7,40 @@
   // Panels / Mode
   const panelQuick = $('panel-quick'), panelSurvey = $('panel-survey'), panelResults = $('panel-results');
   const modeQuickBtn = $('modeQuick'), modeSurveyBtn = $('modeSurvey');
+  const goToSurveyBtn = $('btn-go-to-survey'), goToResultsBtn = $('btn-go-to-results'), goToTestsBtn = $('btn-go-to-tests');
 
-  function setMode(mode) {
+  function setMode(mode, persist = true) {
     if(mode === 'quick'){
-      panelQuick.classList.remove('hidden');
-      panelSurvey.classList.add('hidden');
-      modeQuickBtn.classList.add('active');
-      modeSurveyBtn.classList.remove('active');
+      panelQuick && panelQuick.classList.remove('hidden');
+      panelSurvey && panelSurvey.classList.add('hidden');
+      panelResults && panelResults.classList.add('hidden');
+      modeQuickBtn && modeQuickBtn.classList.add('active');
+      modeSurveyBtn && modeSurveyBtn.classList.remove('active');
     } else if(mode === 'survey'){
-      panelQuick.classList.add('hidden');
-      panelSurvey.classList.remove('hidden');
-      modeQuickBtn.classList.remove('active');
-      modeSurveyBtn.classList.add('active');
+      panelQuick && panelQuick.classList.add('hidden');
+      panelSurvey && panelSurvey.classList.remove('hidden');
+      panelResults && panelResults.classList.add('hidden');
+      modeQuickBtn && modeQuickBtn.classList.remove('active');
+      modeSurveyBtn && modeSurveyBtn.classList.add('active');
     } else if(mode === 'results'){
-      panelQuick.classList.add('hidden');
-      panelSurvey.classList.add('hidden');
-      panelResults.classList.remove('hidden');
-      modeQuickBtn.classList.remove('active');
-      modeSurveyBtn.classList.remove('active');
+      panelQuick && panelQuick.classList.add('hidden');
+      panelSurvey && panelSurvey.classList.add('hidden');
+      panelResults && panelResults.classList.remove('hidden');
+      modeQuickBtn && modeQuickBtn.classList.remove('active');
+      modeSurveyBtn && modeSurveyBtn.classList.remove('active');
     }
+    if(persist) try { localStorage.setItem('uiMode', mode); } catch(e){}
   }
 
-  modeQuickBtn.addEventListener('click', ()=> setMode('quick'));
-  modeSurveyBtn.addEventListener('click', ()=> setMode('survey'));
-  $('btn-go-to-tests')?.addEventListener('click', ()=> setMode('quick'));
-  $('btn-go-to-results')?.addEventListener('click', ()=> setMode('results'));
-  setMode('quick');
+  modeQuickBtn && modeQuickBtn.addEventListener('click', ()=> setMode('quick'));
+  modeSurveyBtn && modeSurveyBtn.addEventListener('click', ()=> setMode('survey'));
+  goToSurveyBtn && goToSurveyBtn.addEventListener('click', ()=> setMode('survey'));
+  goToResultsBtn && goToResultsBtn.addEventListener('click', ()=> setMode('results'));
+  goToTestsBtn && goToTestsBtn.addEventListener('click', ()=> setMode('quick'));
+
+  // initialize mode from localStorage (do NOT forcibly hide Survey on small screens)
+  const savedMode = (localStorage.getItem('uiMode') || 'quick');
+  setMode(savedMode, false);
 
   // Elements - quick & survey
   const deviceEl = $('device'), pointEl = $('point'), runEl = $('run'), runBtn = $('runBtn');
@@ -60,7 +68,7 @@
   let results = [], filteredResults = [], gaugeChart = null, lastSurveyTaskId = null;
   let currentSse = null;
 
-  // Chart (throughput) - remains as before (may not exist in small variants)
+  // Chart (throughput) - remains (if present)
   const ctx = document.getElementById('throughputChart')?.getContext('2d');
   const chart = ctx ? new Chart(ctx, {
     type: 'line',
@@ -114,13 +122,11 @@
 
   function showLiveVisuals(){
     if(!liveVisuals) return;
-    liveVisuals.style.display = 'flex';
     liveVisuals.classList.add('show');
     createGauge(0,200);
   }
   function hideLiveVisuals(){
     if(!liveVisuals) return;
-    liveVisuals.style.display = 'none';
     liveVisuals.classList.remove('show');
   }
 
@@ -128,7 +134,7 @@
   function fmtTime(s){ s = Math.max(0, Math.round(s)); const mm = String(Math.floor(s/60)).padStart(2,'0'); const ss = String(s%60).padStart(2,'0'); return `${mm}:${ss}`; }
   function escapeHtml(s){ if(!s) return ''; return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
-  // SSE and polling (reuse functions from previous version)
+  // SSE and polling
   function openSseForTask(task_id){
     if(!task_id) return;
     if(typeof(EventSource) === 'undefined') { pollTaskStatus(task_id, 1000); return; }
@@ -222,7 +228,6 @@
       }
       updateSummary();
     }
-    // leave live visuals visible for user to inspect; the user may collapse manually if desired
     runProgressFill && (runProgressFill.style.width = `0%`);
     progressPct && (progressPct.textContent = `0%`);
     timeRemainingEl && (timeRemainingEl.textContent = '00:00');
@@ -248,8 +253,8 @@
     resultsList.prepend(card);
   }
 
-  // Run quick test: start task and open SSE
-  runBtn.addEventListener('click', async ()=>{
+  // Run quick test
+  runBtn && runBtn.addEventListener('click', async ()=>{
     runBtn.disabled = true;
     const device = (deviceEl.value || 'phone').trim();
     const point = (pointEl.value || 'P1').trim();
@@ -260,20 +265,19 @@
       if(!j || !j.ok){ liveSummary && (liveSummary.textContent = `Error iniciando prueba: ${j?.error||'unknown'}`); runBtn.disabled=false; return; }
       const task_id = j.task_id;
       lastSurveyTaskId = task_id;
+      $('lastSurveyId') && ($('lastSurveyId').textContent = task_id);
       showLiveVisuals();
       liveSummary && (liveSummary.textContent = 'Tarea iniciada, esperando actualizaciones...');
       openSseForTask(task_id);
-      setMode('results'); // switch to results view so user sees list and live visuals
+      setMode('results'); // switch to results so user sees list and live visuals
     } catch(e){
       liveSummary && (liveSummary.textContent = `Error comunicando con servidor: ${e.message}`);
       console.error(e);
-    } finally {
-      runBtn.disabled=false;
-    }
+    } finally { runBtn.disabled = false; }
   });
 
   // Start survey
-  startSurveyBtn.addEventListener('click', async ()=>{
+  startSurveyBtn && startSurveyBtn.addEventListener('click', async ()=>{
     startSurveyBtn.disabled = true;
     const device = (surveyDeviceEl.value || deviceEl.value || 'phone').trim();
     const ptsRaw = (pointsEl.value || '').trim();
@@ -288,7 +292,7 @@
       const task_id = j.task_id;
       lastSurveyTaskId = task_id;
       $('lastSurveyId') && ($('lastSurveyId').textContent = task_id);
-      cancelTaskBtn.disabled = false;
+      cancelTaskBtn && (cancelTaskBtn.disabled = false);
       showLiveVisuals();
       openSseForTask(task_id);
       surveyArea && (surveyArea.hidden = false);
@@ -296,9 +300,7 @@
     } catch(e){
       surveyLog && (surveyLog.textContent = 'Error al iniciar: '+e);
       console.error(e);
-    } finally {
-      startSurveyBtn.disabled = false;
-    }
+    } finally { startSurveyBtn.disabled = false; }
   });
 
   // Proceed / Cancel survey
@@ -320,7 +322,7 @@
     } catch(e){ console.warn('Cancel error', e); }
   });
 
-  // Manual show/hide live panel buttons
+  // Manual show/hide live panel
   showLiveQuick && showLiveQuick.addEventListener('click', ()=> { showLiveVisuals(); setMode('results'); });
   showLiveSurvey && showLiveSurvey.addEventListener('click', ()=> { showLiveVisuals(); setMode('results'); });
 
@@ -336,13 +338,11 @@
     const dlVals = results.map(x=>Number(x.iperf_dl_mbps)).filter(n=>!isNaN(n));
     const ulVals = results.map(x=>Number(x.iperf_ul_mbps)).filter(n=>!isNaN(n));
     const pingVals = results.map(x=>Number(x.ping_avg)).filter(n=>!isNaN(n));
-    const jitterVals = results.map(x=>Number(x.ping_jitter)).filter(n=>!isNaN(n));
     const avg = arr => arr.length ? (arr.reduce((a,b)=>a+b,0)/arr.length) : NaN;
     avgRssi && (avgRssi.textContent = rssiVals.length ? Math.round(avg(rssiVals)) + ' dBm' : '—');
     avgDl && (avgDl.textContent = dlVals.length ? avg(dlVals).toFixed(2) + ' Mbps' : '—');
     avgUl && (avgUl.textContent = ulVals.length ? avg(ulVals).toFixed(2) + ' Mbps' : '—');
     avgPing && (avgPing.textContent = pingVals.length ? avg(pingVals).toFixed(2) + ' ms' : '—');
-    avgJitter && (avgJitter.textContent = jitterVals.length ? avg(jitterVals).toFixed(2) + ' ms' : '—');
   }
 
   // Check server raw list to set status dot
