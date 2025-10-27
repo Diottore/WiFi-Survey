@@ -1,0 +1,50 @@
+[MASTER]
+# Python code to execute, usually for sys.path manipulation
+init-hook='import sys; sys.path.append(".")'
+
+# Files or directories to be skipped
+ignore=.git,__pycache__,.venv,venv,env
+
+# Use multiple processes to speed up Pylint
+jobs=1
+
+[MESSAGES CONTROL]
+# Disable specific warnings that are not critical for this project
+disable=
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    line-too-long,
+    too-few-public-methods,
+    too-many-locals,
+    too-many-statements,
+    too-many-branches,
+    broad-except,
+    global-statement,
+    invalid-name
+
+[FORMAT]
+# Maximum number of characters on a single line
+max-line-length=120
+
+# String used for indentation
+indent-string='    '
+
+[BASIC]
+# Good variable names which should always be accepted
+good-names=i,j,k,ex,Run,_,id,f,r,p,t,m,q,k,v,n,a,b
+
+[DESIGN]
+# Maximum number of arguments for function / method
+max-args=10
+
+# Maximum number of attributes for a class
+max-attributes=15
+
+[SIMILARITIES]
+# Minimum lines number of a similarity
+min-similarity-lines=10
+
+[VARIABLES]
+# Tells whether we should check for unused import in __init__ files
+init-import=no

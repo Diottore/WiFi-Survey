@@ -1,7 +1,51 @@
+# Results and data
 raw_results/
-*.pyc
-__pycache__/
-.venv/
-.env
-.DS_Store
 wifi_survey_results.csv
+iperf_results.csv
+
+# Python
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env
+.virtualenv
+
+# IDE and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# Local configuration
+config.local.ini
+*.local.ini
+
+# OS files
+Thumbs.db
+.directory
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
+.~*
