@@ -1,18 +1,82 @@
 #!/usr/bin/env python3
-# app.py — añade timeseries de muestras por prueba (t, dl, ul, ping) para live y export.
+# app.py — WiFi Survey Flask Application
+# Adds timeseries of samples per test (t, dl, ul, ping) for live and export.
 
-import os, csv, json, uuid, threading, subprocess, re, time
+import os
+import csv
+import json
+import uuid
+import threading
+import subprocess
+import re
+import time
+import logging
+import configparser
 from datetime import datetime
 from flask import Flask, request, jsonify, send_file, render_template, abort, Response
 from flask_cors import CORS
 
-APP_DIR = os.path.abspath(os.path.dirname(__file__))
-RAW_DIR = os.path.join(APP_DIR, "raw_results")
-CSV_FILE = os.path.join(APP_DIR, "wifi_survey_results.csv")
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-SERVER_IP = "192.168.1.10"
-IPERF_DURATION = 20
-IPERF_PARALLEL = 4
+# Load configuration
+def load_config():
+    """Load configuration from config.local.ini or config.ini"""
+    config = configparser.ConfigParser()
+    config_files = ['config.local.ini', 'config.ini']
+    
+    for config_file in config_files:
+        if os.path.exists(config_file):
+            logger.info(f"Loading configuration from {config_file}")
+            config.read(config_file)
+            return config
+    
+    logger.warning("No configuration file found, using defaults")
+    # Return default config
+    config['server'] = {
+        'ip': '192.168.1.10',
+        'flask_host': '0.0.0.0',
+        'flask_port': '5000'
+    }
+    config['iperf'] = {
+        'duration': '20',
+        'parallel': '4'
+    }
+    config['paths'] = {
+        'raw_results': 'raw_results',
+        'csv_file': 'wifi_survey_results.csv'
+    }
+    return config
+
+# Load configuration
+config = load_config()
+
+# Configuration values with validation
+APP_DIR = os.path.abspath(os.path.dirname(__file__))
+RAW_DIR = os.path.join(APP_DIR, config.get('paths', 'raw_results', fallback='raw_results'))
+CSV_FILE = os.path.join(APP_DIR, config.get('paths', 'csv_file', fallback='wifi_survey_results.csv'))
+
+SERVER_IP = config.get('server', 'ip', fallback='192.168.1.10')
+IPERF_DURATION = config.getint('iperf', 'duration', fallback=20)
+IPERF_PARALLEL = config.getint('iperf', 'parallel', fallback=4)
+FLASK_HOST = config.get('server', 'flask_host', fallback='0.0.0.0')
+FLASK_PORT = config.getint('server', 'flask_port', fallback=5000)
+
+# Validate configuration
+if IPERF_DURATION < 1 or IPERF_DURATION > 300:
+    logger.warning(f"Invalid iperf duration {IPERF_DURATION}, using default 20")
+    IPERF_DURATION = 20
+
+if IPERF_PARALLEL < 1 or IPERF_PARALLEL > 16:
+    logger.warning(f"Invalid iperf parallel {IPERF_PARALLEL}, using default 4")
+    IPERF_PARALLEL = 4
+
+logger.info(f"Server IP: {SERVER_IP}")
+logger.info(f"iperf duration: {IPERF_DURATION}s, parallel streams: {IPERF_PARALLEL}")
 
 os.makedirs(RAW_DIR, exist_ok=True)
 
@@ -268,47 +332,132 @@ def index():
 
 @app.route("/run_point", methods=["POST"])
 def run_point():
-    payload = request.json or {}
-    device = payload.get("device", "phone")
-    point = payload.get("point", "P1")
-    run_index = int(payload.get("run", 1))
-    duration = int(payload.get("duration", IPERF_DURATION))
-    parallel = int(payload.get("parallel", IPERF_PARALLEL))
-    task_id = str(uuid.uuid4())
-    with tasks_lock:
-        tasks[task_id] = {"status":"queued", "total":1, "done":0, "logs":[], "results": [], "partial": {}, "seq": 0}
-    t = threading.Thread(target=worker_run_point, args=(task_id, device, point, run_index, duration, parallel), daemon=True)
-    t.start()
-    return jsonify({"ok": True, "task_id": task_id})
+    """Execute a single point measurement"""
+    try:
+        payload = request.json or {}
+        
+        # Validate inputs
+        device = str(payload.get("device", "phone")).strip()
+        if not device or len(device) > 100:
+            return jsonify({"ok": False, "error": "Invalid device name"}), 400
+        
+        point = str(payload.get("point", "P1")).strip()
+        if not point or len(point) > 50:
+            return jsonify({"ok": False, "error": "Invalid point ID"}), 400
+        
+        try:
+            run_index = int(payload.get("run", 1))
+            if run_index < 1 or run_index > 1000:
+                return jsonify({"ok": False, "error": "Run index must be between 1 and 1000"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"ok": False, "error": "Invalid run index"}), 400
+        
+        try:
+            duration = int(payload.get("duration", IPERF_DURATION))
+            if duration < 1 or duration > 300:
+                return jsonify({"ok": False, "error": "Duration must be between 1 and 300 seconds"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"ok": False, "error": "Invalid duration"}), 400
+        
+        try:
+            parallel = int(payload.get("parallel", IPERF_PARALLEL))
+            if parallel < 1 or parallel > 16:
+                return jsonify({"ok": False, "error": "Parallel streams must be between 1 and 16"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"ok": False, "error": "Invalid parallel streams"}), 400
+        
+        task_id = str(uuid.uuid4())
+        with tasks_lock:
+            tasks[task_id] = {
+                "status": "queued",
+                "total": 1,
+                "done": 0,
+                "logs": [],
+                "results": [],
+                "partial": {},
+                "seq": 0
+            }
+        
+        t = threading.Thread(
+            target=worker_run_point,
+            args=(task_id, device, point, run_index, duration, parallel),
+            daemon=True
+        )
+        t.start()
+        logger.info(f"Started point measurement: {point}, task_id: {task_id}")
+        return jsonify({"ok": True, "task_id": task_id})
+    
+    except Exception as e:
+        logger.error(f"Error in run_point: {e}")
+        return jsonify({"ok": False, "error": "Internal server error"}), 500
 
 @app.route("/start_survey", methods=["POST"])
 def start_survey():
-    payload = request.json or {}
-    device = payload.get("device", "phone")
-    points = payload.get("points", [])
-    repeats = int(payload.get("repeats", 1))
-    manual = bool(payload.get("manual", False))
-    if isinstance(points, str):
-        points = points.split() if points.strip() else []
-    if not points:
-        return jsonify({"ok": False, "error": "no points provided"}), 400
-
-    parent_id = str(uuid.uuid4())
-    with tasks_lock:
-        tasks[parent_id] = {"status":"queued", "total": len(points)*repeats, "done":0, "logs":[], "results": [], "partial": {}, "seq": 0, "cancel": False, "waiting": False, "proceed": False}
-
-    def survey_worker(p_id, device, points, repeats, manual):
+    """Start a survey with multiple measurement points"""
+    try:
+        payload = request.json or {}
+        
+        # Validate device
+        device = str(payload.get("device", "phone")).strip()
+        if not device or len(device) > 100:
+            return jsonify({"ok": False, "error": "Invalid device name"}), 400
+        
+        # Validate points
+        points = payload.get("points", [])
+        if isinstance(points, str):
+            points = points.split() if points.strip() else []
+        
+        if not points:
+            return jsonify({"ok": False, "error": "No points provided"}), 400
+        
+        if len(points) > 1000:
+            return jsonify({"ok": False, "error": "Too many points (max 1000)"}), 400
+        
+        # Validate each point
+        validated_points = []
+        for p in points:
+            p_str = str(p).strip()
+            if not p_str or len(p_str) > 50:
+                return jsonify({"ok": False, "error": f"Invalid point: {p}"}), 400
+            validated_points.append(p_str)
+        
+        # Validate repeats
+        try:
+            repeats = int(payload.get("repeats", 1))
+            if repeats < 1 or repeats > 100:
+                return jsonify({"ok": False, "error": "Repeats must be between 1 and 100"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"ok": False, "error": "Invalid repeats value"}), 400
+        
+        manual = bool(payload.get("manual", False))
+        
+        parent_id = str(uuid.uuid4())
         with tasks_lock:
-            tasks[p_id]["status"] = "running"
-            tasks[p_id]["logs"].append(f"Survey started: {points} repeats:{repeats} manual:{manual}")
-        for rep in range(repeats):
-            for pt in points:
-                with tasks_lock:
-                    if tasks[p_id].get("cancel"):
-                        tasks[p_id]["status"] = "cancelled"
-                        tasks[p_id]["logs"].append("Survey cancelled")
-                        tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
-                        return
+            tasks[parent_id] = {
+                "status": "queued",
+                "total": len(validated_points) * repeats,
+                "done": 0,
+                "logs": [],
+                "results": [],
+                "partial": {},
+                "seq": 0,
+                "cancel": False,
+                "waiting": False,
+                "proceed": False
+            }
+        
+        def survey_worker(p_id, device, points, repeats, manual):
+            with tasks_lock:
+                tasks[p_id]["status"] = "running"
+                tasks[p_id]["logs"].append(f"Survey started: {points} repeats:{repeats} manual:{manual}")
+            for rep in range(repeats):
+                for pt in points:
+                    with tasks_lock:
+                        if tasks[p_id].get("cancel"):
+                            tasks[p_id]["status"] = "cancelled"
+                            tasks[p_id]["logs"].append("Survey cancelled")
+                            tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
+                            return
                 if manual:
                     with tasks_lock:
                         tasks[p_id]["waiting"] = True
@@ -343,10 +492,19 @@ def start_survey():
             tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
             tasks[p_id]["logs"].append("Survey finished")
         return
-
-    t = threading.Thread(target=survey_worker, args=(parent_id, device, points, repeats, manual), daemon=True)
-    t.start()
-    return jsonify({"ok": True, "task_id": parent_id})
+        
+        t = threading.Thread(
+            target=survey_worker,
+            args=(parent_id, device, validated_points, repeats, manual),
+            daemon=True
+        )
+        t.start()
+        logger.info(f"Started survey: {len(validated_points)} points, {repeats} repeats, task_id: {parent_id}")
+        return jsonify({"ok": True, "task_id": parent_id})
+    
+    except Exception as e:
+        logger.error(f"Error in start_survey: {e}")
+        return jsonify({"ok": False, "error": "Internal server error"}), 500
 
 @app.route("/task_proceed/<task_id>", methods=["POST"])
 def task_proceed(task_id):
@@ -417,7 +575,13 @@ def raw_file(fname):
 
 @app.route("/_survey_config")
 def survey_config():
-    return jsonify({"IPERF_DURATION": IPERF_DURATION, "IPERF_PARALLEL": IPERF_PARALLEL, "SERVER_IP": SERVER_IP})
+    """Return current survey configuration"""
+    return jsonify({
+        "IPERF_DURATION": IPERF_DURATION,
+        "IPERF_PARALLEL": IPERF_PARALLEL,
+        "SERVER_IP": SERVER_IP
+    })
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    logger.info(f"Starting WiFi Survey application on {FLASK_HOST}:{FLASK_PORT}")
+    app.run(host=FLASK_HOST, port=FLASK_PORT, debug=False)
