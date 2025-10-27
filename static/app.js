@@ -1,6 +1,5 @@
-// static/app.js v5 — Tacómetro con ángulo de inicio configurable (estilo Ookla/OpenSpeedTest)
-// Mantiene SSE/polling y resto de lógica.
-// Ajusta GAUGE_START_DEG y GAUGE_SWEEP_DEG a tu preferencia.
+// static/app.js v6 — Tacómetro con etiquetas sobre las líneas (ticks) y escala "nice" estable.
+// Mantiene SSE/polling y resto de lógica. Ángulo configurable.
 
 (() => {
   const $ = id => document.getElementById(id);
@@ -8,7 +7,7 @@
   // Ángulo y barrido del tacómetro (grados)
   //  - Ookla-like: start=210, sweep=240
   //  - Semicírculo: start=180, sweep=180
-  const GAUGE_START_DEG = 180;
+  const GAUGE_START_DEG = 210;
   const GAUGE_SWEEP_DEG = 240;
 
   // Panels / Mode
@@ -45,7 +44,7 @@
   const speedGaugeCanvas = $('speedGauge');
   const speedValEl = $('speedVal'), speedUnitEl = $('speedUnit');
   const gaugeLabel = $('gaugeLabel'); // compat
-  const gaugeScaleLabel = $('gaugeScaleLabel');
+  const gaugeScaleLabel = $('gaugeScaleLabel'); // línea vieja de escala (la ocultaremos)
   const runProgressFill = $('runProgressFill');
   const progressPct = $('progressPct');
   const timeRemainingEl = $('timeRemaining');
@@ -55,10 +54,13 @@
   const showLiveQuick = $('showLiveQuick'), showLiveSurvey = $('showLiveSurvey'), hideLivePanelBtn = $('hideLivePanel');
   const surveyDeviceEl = $('survey_device'), manualCheckbox = $('manual_confirm'), proceedBtn = $('proceedBtn');
 
+  // Oculta la línea antigua de números bajo el gauge
+  if (gaugeScaleLabel) gaugeScaleLabel.style.display = 'none';
+
   // State
   let results = [], lastSurveyTaskId = null, currentSse = null;
 
-  // Optional chart (si existe en tu HTML)
+  // Optional chart
   const ctx = document.getElementById('throughputChart')?.getContext('2d');
   const chart = ctx ? new Chart(ctx, {
     type: 'line',
@@ -71,7 +73,7 @@
   }) : null;
 
   // ======================
-  // Speedometer (canvas) con ángulo configurable
+  // Speedometer (canvas) con etiquetas sobre los ticks
   // ======================
   class Speedometer {
     constructor(canvas, opts = {}) {
@@ -79,10 +81,14 @@
       this.ctx = canvas.getContext('2d');
       this.value = 0;
       this.animVal = 0;
-      this.max = opts.max || 200;
+      this.max = opts.max || 200;         // rango interno animado
+      this.displayStep = this.niceStep(this.max, 6);
+      this.displayMax = this.displayStep * 6; // escala visible (7 etiquetas: 0..6)
+      this.observedPeak = 0;              // pico observado para autoescalado estable
+
       this.min = 0;
-      this.startDeg = Number(opts.startDeg ?? 210);   // Grados desde el eje X positivo (0° = derecha)
-      this.sweepDeg = Number(opts.sweepDeg ?? 240);   // Barrido en grados
+      this.startDeg = Number(opts.startDeg ?? 210);
+      this.sweepDeg = Number(opts.sweepDeg ?? 240);
       this.pixelRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
       this._raf = null;
       this._lastTs = 0;
@@ -91,25 +97,55 @@
       this.resize();
     }
 
-    niceMaxFor(v) {
-      const targets = [10, 25, 50, 100, 200, 500, 1000, 2000, 5000, 10000];
-      const want = Math.max(10, v * 1.25);
-      for (const t of targets) if (want <= t) return t;
-      return targets[targets.length - 1];
+    toRad(deg){ return deg * Math.PI / 180; }
+
+    // Elegir un "nice step" con 1/2/5 * 10^n
+    niceStep(max, majors = 6) {
+      const step = Math.max(1, max / majors);
+      const pow = Math.pow(10, Math.floor(Math.log10(step)));
+      const base = step / pow;
+      let n;
+      if (base <= 1) n = 1;
+      else if (base <= 2) n = 2;
+      else if (base <= 5) n = 5;
+      else n = 10;
+      return n * pow;
     }
 
-    format(val) {
+    // Límite superior "bonito" para el pico
+    niceMaxFor(v) {
+      const step = this.niceStep(v, 6);
+      return step * 6;
+    }
+
+    formatValue(val) {
       if (val >= 1000) {
-        return { num: (val/1000).toFixed(val >= 10000 ? 1 : 2), unit: 'Gbps' };
+        const g = val / 1000;
+        return { num: g >= 10 ? Math.round(g).toString() : g.toFixed(1), unit: 'Gbps' };
       }
       return { num: Number(val).toFixed(val >= 100 ? 1 : 2), unit: 'Mbps' };
     }
 
+    formatTick(val) {
+      if (val >= 1000) {
+        const k = val / 1000;
+        return k >= 10 ? `${Math.round(k)}k` : `${k.toFixed(1)}k`;
+      }
+      return String(Math.round(val));
+    }
+
     set(value) {
       this.value = Math.max(0, Number(value) || 0);
-      // auto scale “nice”
-      const targetMax = this.niceMaxFor(Math.max(this.value, this.max));
-      this.max += (targetMax - this.max) * 0.12; // easing del rango
+      // actualizar pico y targetMax "nice"
+      this.observedPeak = Math.max(this.observedPeak, this.value);
+      const targetMax = this.niceMaxFor(this.observedPeak);
+      // easing del rango interno
+      this.max += (targetMax - this.max) * 0.12;
+
+      // recalcular escala visible con step "nice"
+      this.displayStep = this.niceStep(this.max, 6);
+      this.displayMax = this.displayStep * 6;
+
       if (!this._raf) this._raf = requestAnimationFrame((ts)=>this.draw(ts));
     }
 
@@ -117,7 +153,7 @@
       const box = this.canvas.getBoundingClientRect();
       const pr = this.pixelRatio;
       const w = Math.max(320, Math.round(box.width)) || 360;
-      const h = Math.round(w * 0.62); // relación agradable
+      const h = Math.round(w * 0.62);
       this.canvas.width = Math.round(w * pr);
       this.canvas.height = Math.round(h * pr);
       this.canvas.style.width = w + 'px';
@@ -134,27 +170,21 @@
 
     stop() { if (this._raf) cancelAnimationFrame(this._raf); this._raf = null; }
 
-    toRad(deg){ return deg * Math.PI / 180; }
-
     draw(ts) {
       const ctx = this.ctx;
       const pr = this.pixelRatio;
-      // animación de valor
       const dt = Math.min(0.08, (ts - this._lastTs) / 1000 || 0.016);
       this._lastTs = ts;
       this.animVal += (this.value - this.animVal) * Math.min(1, dt*5);
 
-      // ángulos de arco (sin rotaciones internas)
       const startA = this.toRad(this.startDeg);
       const endA = startA + this.toRad(this.sweepDeg);
 
-      // bg
       ctx.clearRect(0,0,this.canvas.width,this.canvas.height);
-
       ctx.save();
       ctx.translate(this.cx, this.cy);
 
-      // arco de fondo (track)
+      // TRACK
       ctx.lineCap = 'round';
       ctx.lineWidth = this.thickness;
       ctx.strokeStyle = 'rgba(15, 23, 42, 0.08)';
@@ -162,25 +192,23 @@
       ctx.arc(0,0,this.radius, startA, endA);
       ctx.stroke();
 
-      // arco de progreso con degradado
-      const f = Math.max(0, Math.min(1, this.animVal / this.max));
+      // PROGRESO
+      const f = Math.max(0, Math.min(1, this.animVal / this.displayMax));
       const grad = ctx.createLinearGradient(-this.radius, 0, this.radius, 0);
-      grad.addColorStop(0.00, '#06b6d4'); // cian
-      grad.addColorStop(0.55, '#0b74ff'); // azul
-      grad.addColorStop(1.00, '#7c3aed'); // violeta
-
+      grad.addColorStop(0.00, '#06b6d4');
+      grad.addColorStop(0.55, '#0b74ff');
+      grad.addColorStop(1.00, '#7c3aed');
       ctx.strokeStyle = grad;
       ctx.shadowColor = 'rgba(12, 74, 110, 0.35)';
       ctx.shadowBlur = Math.max(6*pr, this.thickness*0.6);
-
       ctx.beginPath();
       ctx.arc(0,0,this.radius, startA, startA + f*(endA-startA));
       ctx.stroke();
       ctx.shadowBlur = 0;
 
-      // ticks
-      const majors = 6;  // 7 marcas (0..6)
-      const minors = 4;  // entre mayores
+      // TICKS
+      const majors = 6;  // 7 marcas
+      const minors = 4;
       ctx.lineWidth = Math.max(2*pr, this.thickness*0.14);
       ctx.strokeStyle = 'rgba(15, 23, 42, 0.22)';
 
@@ -189,11 +217,13 @@
         const a = startA + frac*(endA-startA);
         const r1 = this.radius + this.thickness*0.05;
         const r2 = r1 + this.tickLenMajor;
+        // mayor
         ctx.beginPath();
         ctx.moveTo(r1*Math.cos(a), r1*Math.sin(a));
         ctx.lineTo(r2*Math.cos(a), r2*Math.sin(a));
         ctx.stroke();
 
+        // menores entre marcas
         if (i<majors){
           for (let m=1;m<minors;m++){
             const frac2 = (i + m/minors)/majors;
@@ -208,23 +238,32 @@
         }
       }
 
-      ctx.restore();
+      // ETIQUETAS SOBRE LOS TICKS MAYORES
+      const fontPx = Math.max(10, this.fontBase * 0.75);
+      ctx.fillStyle = '#111827';
+      ctx.font = `600 ${fontPx}px Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const labelR = this.radius + this.thickness*1.55; // posicionar sobre el extremo de los ticks
 
-      // etiquetas de escala (debajo del arco, solo texto compactado)
-      const maxNice = this.max;
-      const step = maxNice / 6;
-      const labels = Array.from({length:7},(_,i)=> Math.round(i*step));
-      if (typeof gaugeScaleLabel !== 'undefined' && gaugeScaleLabel) {
-        gaugeScaleLabel.textContent = labels.join('   ');
+      for (let i=0;i<=majors;i++){
+        const val = i * this.displayStep;
+        const text = this.formatTick(val);
+        const frac = i/majors;
+        const a = startA + frac*(endA-startA);
+        const x = labelR * Math.cos(a);
+        const y = labelR * Math.sin(a);
+        ctx.fillText(text, x, y);
       }
 
-      // readout
-      const {num, unit} = this.format(this.animVal);
+      ctx.restore();
+
+      // READOUT
+      const {num, unit} = this.formatValue(this.animVal);
       if (speedValEl) speedValEl.textContent = num;
       if (speedUnitEl) speedUnitEl.textContent = unit;
       if (gaugeLabel)  gaugeLabel.textContent = `${Number(this.animVal).toFixed(2)} Mbps`;
 
-      // seguir animando si hay cambio significativo
       if (Math.abs(this.value - this.animVal) > 0.01) {
         this._raf = requestAnimationFrame((t)=>this.draw(t));
       } else {
@@ -330,7 +369,7 @@
     } else {
       const mapped = mapFinalToResult(res);
       const dl = Number(mapped.iperf_dl_mbps || 0);
-      // pequeña animación final hacia el valor definitivo
+      // animación final hacia el valor definitivo
       const start = speedo ? speedo.animVal : 0;
       const target = Math.max(start, dl);
       const steps = 24; let i=0;
@@ -471,7 +510,7 @@
     try { await fetch(`/task_cancel/${encodeURIComponent(lastSurveyTaskId)}`, { method:'POST' }); } catch(e){ console.warn('Cancel error', e); }
   });
 
-  // Export / Clear (si tienes los botones en tu HTML)
+  // Export / Clear (si tienes los botones)
   const exportJsonBtn = $('exportJsonBtn'), clearResultsBtn = $('clearResultsBtn');
   const exportCsvWideBtn = $('exportCsvWide'), exportCsvLongBtn = $('exportCsvLong'), exportSummaryJsonBtn = $('exportSummaryJson');
 
