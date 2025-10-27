@@ -1,5 +1,5 @@
-// static/app.js v3 - Datos y reportes mejorados: ping p50/p95/loss, export CSV wide/long y resumen JSON.
-// UI pulida, sin desbordes. Modo persistente. SSE/polling intacto.
+// static/app.js v4 — Tacómetro estilo Ookla/OpenSpeedTest (canvas), auto-escalado nice, animación suave.
+// Mantiene SSE/polling y resto de lógica.
 
 (() => {
   const $ = id => document.getElementById(id);
@@ -10,9 +10,8 @@
   const goToSurveyBtn = $('btn-go-to-survey'), goToResultsBtn = $('modeResults') || $('btn-go-to-results'), goToTestsBtn = $('btn-go-to-tests');
 
   function setMode(mode, persist = true) {
-    if (!panelQuick || !panelSurvey || !panelResults) return;
     const map = { quick: panelQuick, survey: panelSurvey, results: panelResults };
-    Object.entries(map).forEach(([k,v]) => v.classList.toggle('hidden', k !== mode));
+    Object.entries(map).forEach(([k,v]) => v && v.classList.toggle('hidden', k !== mode));
     [modeQuickBtn, modeSurveyBtn, modeResultsBtn].forEach(b => b && b.classList.remove('active'));
     if (mode === 'quick' && modeQuickBtn) modeQuickBtn.classList.add('active');
     if (mode === 'survey' && modeSurveyBtn) modeSurveyBtn.classList.add('active');
@@ -25,23 +24,21 @@
   goToSurveyBtn && goToSurveyBtn.addEventListener('click', ()=> setMode('survey'));
   goToResultsBtn && goToResultsBtn.addEventListener('click', ()=> setMode('results'));
   goToTestsBtn && goToTestsBtn.addEventListener('click', ()=> setMode('quick'));
-  const savedMode = (localStorage.getItem('uiMode') || 'quick');
-  setMode(savedMode, false);
+  setMode(localStorage.getItem('uiMode') || 'quick', false);
 
-  // Elements - quick & survey
+  // Elements
   const deviceEl = $('device'), pointEl = $('point'), runEl = $('run'), runBtn = $('runBtn');
   const pointsEl = $('points'), repeatsEl = $('repeats');
   const startSurveyBtn = $('startSurvey'), cancelTaskBtn = $('cancelTask');
-  const surveyArea = $('surveyArea'), surveyLog = $('surveyLog'), surveyStatus = $('surveyStatus'), progressBar = $('progressBar');
+  const surveyArea = $('surveyArea'), surveyLog = $('surveyLog');
   const resultsList = $('resultsList'), avgRssi = $('avgRssi'), avgDl = $('avgDl'), avgUl = $('avgUl'), avgPing = $('avgPing');
-  const exportJsonBtn = $('exportJsonBtn'), clearResultsBtn = $('clearResultsBtn');
-  const exportCsvWideBtn = $('exportCsvWide'), exportCsvLongBtn = $('exportCsvLong'), exportSummaryJsonBtn = $('exportSummaryJson');
-  const surveyDeviceEl = $('survey_device'), manualCheckbox = $('manual_confirm'), proceedBtn = $('proceedBtn');
 
   // Live UI
   const liveVisuals = $('liveVisuals');
   const speedGaugeCanvas = $('speedGauge');
-  const gaugeLabel = $('gaugeLabel');
+  const speedValEl = $('speedVal'), speedUnitEl = $('speedUnit');
+  const gaugeLabel = $('gaugeLabel'); // compat
+  const gaugeScaleLabel = $('gaugeScaleLabel');
   const runProgressFill = $('runProgressFill');
   const progressPct = $('progressPct');
   const timeRemainingEl = $('timeRemaining');
@@ -49,11 +46,12 @@
   const instDlEl = $('instDl'), instUlEl = $('instUl'), instPingEl = $('instPing');
   const instPing50El = $('instPing50'), instPing95El = $('instPing95'), instLossEl = $('instLoss');
   const showLiveQuick = $('showLiveQuick'), showLiveSurvey = $('showLiveSurvey'), hideLivePanelBtn = $('hideLivePanel');
+  const surveyDeviceEl = $('survey_device'), manualCheckbox = $('manual_confirm'), proceedBtn = $('proceedBtn');
 
   // State
-  let results = [], gaugeChart = null, lastSurveyTaskId = null, currentSse = null;
+  let results = [], lastSurveyTaskId = null, currentSse = null;
 
-  // Chart (optional)
+  // Optional chart
   const ctx = document.getElementById('throughputChart')?.getContext('2d');
   const chart = ctx ? new Chart(ctx, {
     type: 'line',
@@ -65,60 +63,190 @@
     options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index', intersect:false}, plugins:{legend:{position:'top'}}, scales:{ x:{title:{display:true,text:'Punto'}}, y:{beginAtZero:true}, y1:{beginAtZero:true, grid:{drawOnChartArea:false}} } }
   }) : null;
 
-  // Gauge
-  function createGauge(initial=0, max=200){
-    if(!speedGaugeCanvas) return null;
-    if(gaugeChart) return gaugeChart;
-    const gctx = speedGaugeCanvas.getContext('2d');
-    const data = { labels:['val','rest'], datasets:[{ data:[initial, Math.max(0, max-initial)], backgroundColor:['#0b74ff','#e6e9ee'], borderWidth:0 }]};
-    const pluginNeedle = {
-      id: 'needle',
-      afterDatasetDraw(chart, args, options){
-        const {ctx} = chart;
-        const meta = chart.getDatasetMeta(0).data[0];
-        if(!meta) return;
-        const cx = meta.x, cy = meta.y + 18;
-        const radius = Math.min(meta.x, meta.y) * 0.9;
-        const value = chart.config.data.datasets[0].data[0];
-        const angle = (-Math.PI/2) + ((value / (options.maxValue||max)) * Math.PI);
-        const nx = cx + Math.cos(angle) * (radius * 0.78);
-        const ny = cy + Math.sin(angle) * (radius * 0.78);
-        ctx.save();
-        ctx.lineWidth = 3; ctx.strokeStyle = options.color || '#222';
-        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(nx, ny); ctx.stroke();
-        ctx.fillStyle = options.centerColor || '#222';
-        ctx.beginPath(); ctx.arc(cx, cy, 6, 0, Math.PI*2); ctx.fill();
-        ctx.restore();
+  // ======================
+  // Speedometer (canvas)
+  // ======================
+  class Speedometer {
+    constructor(canvas, opts = {}) {
+      this.canvas = canvas;
+      this.ctx = canvas.getContext('2d');
+      this.value = 0;
+      this.animVal = 0;
+      this.max = opts.max || 200;
+      this.min = 0;
+      this.pixelRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+      this._raf = null;
+      this._lastTs = 0;
+      this._resizeObserver = new ResizeObserver(()=> this.resize());
+      this._resizeObserver.observe(canvas.parentElement || canvas);
+      this.resize();
+    }
+
+    niceMaxFor(v) {
+      const targets = [10, 25, 50, 100, 200, 500, 1000, 2000, 5000, 10000];
+      const want = Math.max(10, v * 1.25);
+      for (const t of targets) if (want <= t) return t;
+      return targets[targets.length - 1];
+    }
+
+    format(val) {
+      if (val >= 1000) {
+        return { num: (val/1000).toFixed(val >= 10000 ? 1 : 2), unit: 'Gbps' };
       }
-    };
-    if (!Chart.registry.plugins.get('needle')) Chart.register(pluginNeedle);
-    gaugeChart = new Chart(gctx, { type:'doughnut', data, options:{ rotation:-Math.PI, circumference:Math.PI, cutout:'60%', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}, tooltip:{enabled:false}}, maxValue:max }, plugins:['needle']});
-    if (gaugeLabel) gaugeLabel.textContent = `${initial.toFixed(2)} Mbps`;
-    return gaugeChart;
+      return { num: Number(val).toFixed(val >= 100 ? 1 : 2), unit: 'Mbps' };
+    }
+
+    set(value) {
+      this.value = Math.max(0, Number(value) || 0);
+      // auto scale “nice”
+      const targetMax = this.niceMaxFor(Math.max(this.value, this.max));
+      this.max += (targetMax - this.max) * 0.12; // easing del rango
+      if (!this._raf) this._raf = requestAnimationFrame((ts)=>this.draw(ts));
+    }
+
+    resize() {
+      const box = this.canvas.getBoundingClientRect();
+      const pr = this.pixelRatio;
+      const w = Math.max(320, Math.round(box.width)) || 360;
+      const h = Math.round(w * 0.62); // relación agradable
+      this.canvas.width = Math.round(w * pr);
+      this.canvas.height = Math.round(h * pr);
+      this.canvas.style.width = w + 'px';
+      this.canvas.style.height = h + 'px';
+      this.cx = this.canvas.width / 2;
+      this.cy = this.canvas.height * 0.95;
+      this.radius = Math.min(this.cx, this.canvas.height * 0.9) * 0.92;
+      this.thickness = Math.max(12, this.radius * 0.12);
+      this.tickLenMajor = this.thickness * 0.9;
+      this.tickLenMinor = this.thickness * 0.55;
+      this.fontBase = Math.max(10, this.canvas.width * 0.035);
+      this._raf = this._raf || requestAnimationFrame((ts)=>this.draw(ts));
+    }
+
+    stop() { if (this._raf) cancelAnimationFrame(this._raf); this._raf = null; }
+
+    angleFor(f) {
+      // arco 270°: de 225° (-135°) a -45°
+      const start = Math.PI*1.25; // 225°
+      const end   = Math.PI*1.75; // 315° (pero usaremos 270° => hasta -45° = 315°)
+      // mejor: 225° a 495° (225 + 270) => en rad: 1.25π a 2.75π
+      const start2 = Math.PI*1.25;
+      const end2 = Math.PI*2.75;
+      return start2 + f * (end2 - start2);
+    }
+
+    draw(ts) {
+      const ctx = this.ctx;
+      const pr = this.pixelRatio;
+      // animación de valor
+      const dt = Math.min(0.08, (ts - this._lastTs) / 1000 || 0.016);
+      this._lastTs = ts;
+      this.animVal += (this.value - this.animVal) * Math.min(1, dt*5);
+
+      // bg
+      ctx.clearRect(0,0,this.canvas.width,this.canvas.height);
+
+      // arco de fondo
+      ctx.save();
+      ctx.translate(this.cx, this.cy);
+      ctx.rotate(-Math.PI/2); // que 0 apunte hacia arriba
+
+      const track = new Path2D();
+      const start = this.angleFor(0) + Math.PI/2;
+      const end = this.angleFor(1) + Math.PI/2;
+      ctx.lineCap = 'round';
+      ctx.lineWidth = this.thickness;
+      ctx.strokeStyle = 'rgba(15, 23, 42, 0.08)';
+      track.arc(0,0,this.radius, start, end);
+      ctx.stroke(track);
+
+      // arco de progreso con degradado
+      const f = Math.max(0, Math.min(1, this.animVal / this.max));
+      const arc = new Path2D();
+      const grad = ctx.createLinearGradient(-this.radius, 0, this.radius, 0);
+      grad.addColorStop(0.00, '#06b6d4'); // cian
+      grad.addColorStop(0.55, '#0b74ff'); // azul
+      grad.addColorStop(1.00, '#7c3aed'); // violeta
+      ctx.strokeStyle = grad;
+      ctx.shadowColor = 'rgba(12, 74, 110, 0.35)';
+      ctx.shadowBlur = Math.max(6*pr, this.thickness*0.6);
+      arc.arc(0,0,this.radius, start, start + f*(end-start));
+      ctx.stroke(arc);
+      ctx.shadowBlur = 0;
+
+      // ticks
+      const majors = 6;  // 7 marcas (0..6)
+      const minors = 4;  // entre mayores
+      ctx.lineWidth = Math.max(2*pr, this.thickness*0.14);
+      ctx.strokeStyle = 'rgba(15, 23, 42, 0.22)';
+      for (let i=0;i<=majors;i++){
+        const frac = i/majors;
+        const a = start + frac*(end-start);
+        const r1 = this.radius + this.thickness*0.05;
+        const r2 = r1 + this.tickLenMajor;
+        ctx.beginPath();
+        ctx.moveTo(r1*Math.cos(a-Math.PI/2), r1*Math.sin(a-Math.PI/2));
+        ctx.lineTo(r2*Math.cos(a-Math.PI/2), r2*Math.sin(a-Math.PI/2));
+        ctx.stroke();
+
+        if (i<majors){
+          for (let m=1;m<minors;m++){
+            const frac2 = (i + m/minors)/majors;
+            const a2 = start + frac2*(end-start);
+            const r3 = this.radius + this.thickness*0.05;
+            const r4 = r3 + this.tickLenMinor;
+            ctx.beginPath();
+            ctx.moveTo(r3*Math.cos(a2-Math.PI/2), r3*Math.sin(a2-Math.PI/2));
+            ctx.lineTo(r4*Math.cos(a2-Math.PI/2), r4*Math.sin(a2-Math.PI/2));
+            ctx.stroke();
+          }
+        }
+      }
+
+      ctx.restore();
+
+      // números de escala (debajo del arco)
+      const maxNice = this.max;
+      const step = maxNice / 6;
+      const labels = Array.from({length:7},(_,i)=> Math.round(i*step));
+      if (gaugeScaleLabel) gaugeScaleLabel.textContent = labels.join('   ');
+
+      // readout
+      const {num, unit} = this.format(this.animVal);
+      if (speedValEl) speedValEl.textContent = num;
+      if (speedUnitEl) speedUnitEl.textContent = unit;
+      if (gaugeLabel)  gaugeLabel.textContent = `${Number(this.animVal).toFixed(2)} Mbps`;
+
+      // seguir animando si hay cambio significativo
+      if (Math.abs(this.value - this.animVal) > 0.01) {
+        this._raf = requestAnimationFrame((t)=>this.draw(t));
+      } else {
+        this._raf = null;
+      }
+    }
   }
-  function setGaugeValue(v, max=200){
-    if(!speedGaugeCanvas) return;
-    if(!gaugeChart) createGauge(0,max);
-    if(!gaugeChart) return;
-    const newMax = Math.max(max, Math.ceil(v/50)*50 || max); // autoescalado suave
-    gaugeChart.data.datasets[0].data[0] = Math.max(0, Math.min(v, newMax));
-    gaugeChart.data.datasets[0].data[1] = Math.max(0, newMax - gaugeChart.data.datasets[0].data[0]);
-    gaugeChart.options.maxValue = newMax;
-    gaugeChart.update('none');
-    if (gaugeLabel) gaugeLabel.textContent = `${Number(gaugeChart.data.datasets[0].data[0]).toFixed(2)} Mbps`;
-  }
+
+  let speedo = null;
   function showLiveVisuals(){ if(liveVisuals){ liveVisuals.classList.add('show'); createGauge(0,200); } }
   function hideLiveVisuals(){ if(liveVisuals){ liveVisuals.classList.remove('show'); } }
   $('hideLivePanel')?.addEventListener('click', hideLiveVisuals);
   showLiveQuick?.addEventListener('click', ()=> { showLiveVisuals(); setMode('results'); });
   showLiveSurvey?.addEventListener('click', ()=> { showLiveVisuals(); setMode('results'); });
 
-  // Helpers
-  function fmtTime(s){ s = Math.max(0, Math.round(s)); const mm = String(Math.floor(s/60)).padStart(2,'0'); const ss = String(s%60).padStart(2,'0'); return `${mm}:${ss}`; }
-  function escapeHtml(s){ if(!s) return ''; return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-  function num(n){ const v = Number(n); return isNaN(v)? null : v; }
+  function createGauge(initial=0, max=200){
+    if(!speedGaugeCanvas) return null;
+    if (!speedo) speedo = new Speedometer(speedGaugeCanvas, { max });
+    setGaugeValue(initial);
+    return speedo;
+  }
+  function setGaugeValue(v){
+    if(!speedo) createGauge(0, 200);
+    speedo && speedo.set(Number(v) || 0);
+  }
 
-  // SSE / Polling
+  // ======================
+  // SSE / Polling (igual)
+  // ======================
   function openSseForTask(task_id){
     if(!task_id) return;
     if(typeof(EventSource) === 'undefined') { pollTaskStatus(task_id, 1000); return; }
@@ -145,6 +273,17 @@
     }, ms);
   }
 
+  function fmtTime(s){ s = Math.max(0, Math.round(s)); const mm = String(Math.floor(s/60)).padStart(2,'0'); const ss = String(s%60).padStart(2,'0'); return `${mm}:${ss}`; }
+  function num(n){ const v = Number(n); return isNaN(v)? null : v; }
+
+  async function updateRemaining(elapsed, partial){
+    try{
+      const cfg = await fetch('/_survey_config').then(r=>r.ok? r.json(): null);
+      const dur = (cfg && cfg.IPERF_DURATION) ? cfg.IPERF_DURATION : (partial?.duration || 20);
+      timeRemainingEl && (timeRemainingEl.textContent = fmtTime(Math.max(0, dur - (elapsed||0))));
+    } catch(e){}
+  }
+
   function handlePartialUpdate(dataContainer){
     const partial = dataContainer.partial || dataContainer;
     if(!partial) return;
@@ -158,7 +297,7 @@
     const elapsed = Number(partial.elapsed_s || 0);
 
     showLiveVisuals();
-    setGaugeValue(dl, 200);
+    setGaugeValue(dl);
     instDlEl && (instDlEl.textContent = `${dl.toFixed(2)} Mbps`);
     instUlEl && (instUlEl.textContent = `${ul.toFixed(2)} Mbps`);
     instPingEl && (instPingEl.textContent = pingAvg!=null ? `${pingAvg.toFixed(2)} ms` : '—');
@@ -168,16 +307,7 @@
 
     runProgressFill && (runProgressFill.style.width = `${progress}%`);
     progressPct && (progressPct.textContent = `${progress}%`);
-    (async ()=>{
-      try{
-        const cfg = await fetch('/_survey_config').then(r=>r.ok? r.json(): null);
-        if(cfg && cfg.IPERF_DURATION && timeRemainingEl){
-          timeRemainingEl.textContent = fmtTime(Math.max(0, cfg.IPERF_DURATION - (elapsed||0)));
-        } else if (timeRemainingEl) {
-          timeRemainingEl.textContent = fmtTime(Math.max(0, (partial.duration||20) - (elapsed||0)));
-        }
-      }catch(e){}
-    })();
+    updateRemaining(elapsed, partial);
     liveSummary && (liveSummary.textContent = `Ejecutando... ${progress}%`);
   }
 
@@ -188,12 +318,17 @@
       liveSummary && (liveSummary.textContent = `Encuesta finalizada: ${res.length} puntos`);
     } else {
       const mapped = mapFinalToResult(res);
-      // animación gauge
       const dl = Number(mapped.iperf_dl_mbps || 0);
-      const start = gaugeChart ? gaugeChart.data.datasets[0].data[0] : 0;
+      // pequeña animación final hacia el valor definitivo
+      const start = speedo ? speedo.animVal : 0;
       const target = Math.max(start, dl);
-      const steps = 20; let i=0;
-      const stepInterval = setInterval(()=>{ i++; const t = i/steps; const value = start + (target - start) * (1 - Math.cos(Math.PI*t))/2; setGaugeValue(value, Math.max(200,target)); if(i>=steps) clearInterval(stepInterval); },25);
+      const steps = 24; let i=0;
+      const anim = setInterval(()=>{
+        i++; const t = i/steps;
+        setGaugeValue(start + (target-start)*(1 - Math.cos(Math.PI*t))/2);
+        if(i>=steps) clearInterval(anim);
+      }, 18);
+
       instDlEl && (instDlEl.textContent = `${dl.toFixed(2)} Mbps`);
       instUlEl && (instUlEl.textContent = `${Number(mapped.iperf_ul_mbps||0).toFixed(2)} Mbps`);
       instPingEl && (instPingEl.textContent = mapped.ping_avg!=null ? `${Number(mapped.ping_avg).toFixed(2)} ms` : '—');
@@ -222,6 +357,7 @@
   }
 
   function mapFinalToResult(res){
+    const n = v => { const x = Number(v); return isNaN(x)? null : x; };
     return {
       device: res.device || deviceEl?.value || '',
       point: res.point || pointEl?.value || '',
@@ -229,13 +365,13 @@
       ssid: res.ssid || '',
       bssid: res.bssid || '',
       rssi: res.rssi || '',
-      iperf_dl_mbps: num(res.iperf_dl_mbps) ?? null,
-      iperf_ul_mbps: num(res.iperf_ul_mbps) ?? null,
-      ping_avg: num(res.ping_avg_ms) ?? num(res.ping_avg) ?? null,
-      ping_jitter: num(res.ping_jitter_ms) ?? num(res.ping_jitter) ?? null,
-      ping_p50: num(res.ping_p50_ms) ?? null,
-      ping_p95: num(res.ping_p95_ms) ?? null,
-      ping_loss_pct: num(res.ping_loss_pct) ?? null,
+      iperf_dl_mbps: n(res.iperf_dl_mbps),
+      iperf_ul_mbps: n(res.iperf_ul_mbps),
+      ping_avg: n(res.ping_avg_ms) ?? n(res.ping_avg),
+      ping_jitter: n(res.ping_jitter_ms) ?? n(res.ping_jitter),
+      ping_p50: n(res.ping_p50_ms),
+      ping_p95: n(res.ping_p95_ms),
+      ping_loss_pct: n(res.ping_loss_pct),
       raw_file: res.raw_file || ''
     };
   }
@@ -309,22 +445,25 @@
   });
 
   // Proceed / Cancel
-  $('proceedBtn')?.addEventListener('click', async ()=>{
+  proceedBtn && proceedBtn.addEventListener('click', async ()=>{
     if(!lastSurveyTaskId){ alert('No hay encuesta en curso'); return; }
-    const btn = $('proceedBtn'); btn.disabled = true;
+    proceedBtn.disabled = true;
     try {
       const r = await fetch(`/task_proceed/${encodeURIComponent(lastSurveyTaskId)}`, { method:'POST' });
       const js = await r.json();
       if(!js.ok) alert('Error al proceder: '+(js.error||''));
     } catch(e){ alert('Error: '+e); }
-    btn.disabled = false;
+    proceedBtn.disabled = false;
   });
   cancelTaskBtn && cancelTaskBtn.addEventListener('click', async ()=>{
     if(!lastSurveyTaskId){ alert('No hay encuesta en curso'); return; }
     try { await fetch(`/task_cancel/${encodeURIComponent(lastSurveyTaskId)}`, { method:'POST' }); } catch(e){ console.warn('Cancel error', e); }
   });
 
-  // Export helpers
+  // Export / Clear remain igual (si ya lo tenías en v3)
+  const exportJsonBtn = $('exportJsonBtn'), clearResultsBtn = $('clearResultsBtn');
+  const exportCsvWideBtn = $('exportCsvWide'), exportCsvLongBtn = $('exportCsvLong'), exportSummaryJsonBtn = $('exportSummaryJson');
+
   function download(name, text, mime='text/plain'){
     const blob = new Blob([text], {type:mime});
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); URL.revokeObjectURL(a.href);
@@ -337,60 +476,38 @@
       return s;
     }).join(',');
   }
-  function exportCsvLong(){
-    const header = ['device','point','timestamp','ssid','bssid','rssi','dl_mbps','ul_mbps','ping_avg_ms','ping_p50_ms','ping_p95_ms','ping_loss_pct','ping_jitter_ms','raw_file'];
-    const lines = [toCsvRow(header)];
-    results.forEach(r=>{
-      lines.push(toCsvRow([
-        r.device, r.point, r.timestamp, r.ssid, r.bssid, r.rssi,
-        r.iperf_dl_mbps, r.iperf_ul_mbps, r.ping_avg, r.ping_p50, r.ping_p95, r.ping_loss_pct, r.ping_jitter, r.raw_file
-      ]));
-    });
-    download('wifi_results_long.csv', lines.join('\n'), 'text/csv');
-  }
+  function groupBy(arr, key){ const m = new Map(); arr.forEach(it=>{ const k = it[key]||''; if(!m.has(k)) m.set(k, []); m.get(k).push(it); }); return m; }
   function stats(arr){
     const vals = arr.filter(v=>typeof v==='number' && !isNaN(v));
     const n = vals.length;
     if(!n) return {n:0, avg:null, min:null, max:null, std:null, p50:null, p95:null};
     vals.sort((a,b)=>a-b);
-    const sum = vals.reduce((a,b)=>a+b,0);
-    const avg = sum/n;
-    const min = vals[0], max=vals[n-1];
+    const sum = vals.reduce((a,b)=>a+b,0), avg = sum/n, min = vals[0], max=vals[n-1];
     const std = Math.sqrt(vals.reduce((a,b)=>a+(b-avg)*(b-avg),0)/n);
-    const p = (q)=> {
-      const k=(n-1)*(q/100), f=Math.floor(k), c=Math.min(f+1,n-1);
-      return f===c? vals[f] : vals[f]*(c-k)+vals[c]*(k-f);
-    };
-    return {n, avg, min, max, std, p50:p(50), p95:p(95)};
+    const perc = (q)=>{ const k=(n-1)*(q/100), f=Math.floor(k), c=Math.min(f+1,n-1); return f===c? vals[f] : vals[f]*(c-k)+vals[c]*(k-f); };
+    return {n, avg, min, max, std, p50:perc(50), p95:perc(95)};
   }
-  function groupBy(arr, key){ const m = new Map(); arr.forEach(it=>{ const k = it[key]||''; if(!m.has(k)) m.set(k, []); m.get(k).push(it); }); return m; }
+  function exportCsvLong(){
+    const header = ['device','point','timestamp','ssid','bssid','rssi','dl_mbps','ul_mbps','ping_avg_ms','ping_p50_ms','ping_p95_ms','ping_loss_pct','ping_jitter_ms','raw_file'];
+    const lines = [toCsvRow(header)];
+    results.forEach(r=>{
+      lines.push(toCsvRow([r.device,r.point,r.timestamp,r.ssid,r.bssid,r.rssi,r.iperf_dl_mbps,r.iperf_ul_mbps,r.ping_avg,r.ping_p50,r.ping_p95,r.ping_loss_pct,r.ping_jitter,r.raw_file]));
+    });
+    download('wifi_results_long.csv', lines.join('\n'), 'text/csv');
+  }
   function exportCsvWide(){
-    const header = [
-      'point','n',
-      'dl_avg','dl_min','dl_max','dl_std',
-      'ul_avg','ul_min','ul_max','ul_std',
-      'ping_avg','ping_min','ping_max','ping_std','ping_p50','ping_p95',
-      'loss_avg'
-    ];
+    const header = ['point','n','dl_avg','dl_min','dl_max','dl_std','ul_avg','ul_min','ul_max','ul_std','ping_avg','ping_min','ping_max','ping_std','ping_p50','ping_p95','loss_avg'];
     const lines = [toCsvRow(header)];
     const byPoint = groupBy(results, 'point');
     for(const [pt, arr] of byPoint.entries()){
-      const sDL = stats(arr.map(x=>num(x.iperf_dl_mbps)));
-      const sUL = stats(arr.map(x=>num(x.iperf_ul_mbps)));
-      const pAvg = stats(arr.map(x=>num(x.ping_avg)));
-      const p50s = stats(arr.map(x=>num(x.ping_p50)));
-      const p95s = stats(arr.map(x=>num(x.ping_p95)));
-      const lossAvg = (()=> {
-        const vals = arr.map(x=>num(x.ping_loss_pct)).filter(v=>v!=null);
-        return vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length) : null;
-      })();
-      lines.push(toCsvRow([
-        pt, sDL.n,
-        sDL.avg?.toFixed(4), sDL.min?.toFixed(4), sDL.max?.toFixed(4), sDL.std?.toFixed(4),
-        sUL.avg?.toFixed(4), sUL.min?.toFixed(4), sUL.max?.toFixed(4), sUL.std?.toFixed(4),
-        pAvg.avg?.toFixed(4), pAvg.min?.toFixed(4), pAvg.max?.toFixed(4), pAvg.std?.toFixed(4), p50s.p50?.toFixed(4), p95s.p95?.toFixed(4),
-        lossAvg!=null? lossAvg.toFixed(4):''
-      ]));
+      const sDL = stats(arr.map(x=>Number(x.iperf_dl_mbps)));
+      const sUL = stats(arr.map(x=>Number(x.iperf_ul_mbps)));
+      const pAvg = stats(arr.map(x=>Number(x.ping_avg)));
+      const p50s = stats(arr.map(x=>Number(x.ping_p50)));
+      const p95s = stats(arr.map(x=>Number(x.ping_p95)));
+      const lossVals = arr.map(x=>Number(x.ping_loss_pct)).filter(v=>!isNaN(v));
+      const lossAvg = lossVals.length ? lossVals.reduce((a,b)=>a+b,0)/lossVals.length : null;
+      lines.push(toCsvRow([pt,sDL.n,sDL.avg?.toFixed(4),sDL.min?.toFixed(4),sDL.max?.toFixed(4),sDL.std?.toFixed(4),sUL.avg?.toFixed(4),sUL.min?.toFixed(4),sUL.max?.toFixed(4),sUL.std?.toFixed(4),pAvg.avg?.toFixed(4),pAvg.min?.toFixed(4),pAvg.max?.toFixed(4),pAvg.std?.toFixed(4),p50s.p50?.toFixed(4),p95s.p95?.toFixed(4),lossAvg!=null?lossAvg.toFixed(4):'']));
     }
     download('wifi_results_wide.csv', lines.join('\n'), 'text/csv');
   }
@@ -398,47 +515,42 @@
     const summary = {};
     const byPoint = groupBy(results, 'point');
     for(const [pt, arr] of byPoint.entries()){
-      const sDL = stats(arr.map(x=>num(x.iperf_dl_mbps)));
-      const sUL = stats(arr.map(x=>num(x.iperf_ul_mbps)));
-      const pAvg = stats(arr.map(x=>num(x.ping_avg)));
-      const p50s = stats(arr.map(x=>num(x.ping_p50)));
-      const p95s = stats(arr.map(x=>num(x.ping_p95)));
-      const lossVals = arr.map(x=>num(x.ping_loss_pct)).filter(v=>v!=null);
+      const sDL = stats(arr.map(x=>Number(x.iperf_dl_mbps)));
+      const sUL = stats(arr.map(x=>Number(x.iperf_ul_mbps)));
+      const pAvg = stats(arr.map(x=>Number(x.ping_avg)));
+      const p50s = stats(arr.map(x=>Number(x.ping_p50)));
+      const p95s = stats(arr.map(x=>Number(x.ping_p95)));
+      const lossVals = arr.map(x=>Number(x.ping_loss_pct)).filter(v=>!isNaN(v));
       summary[pt] = {
         count: sDL.n,
-        dl: {avg:sDL.avg, min:sDL.min, max:sDL.max, std:sDL.std},
-        ul: {avg:sUL.avg, min:sUL.min, max:sUL.max, std:sUL.std},
-        ping: {avg:pAvg.avg, min:pAvg.min, max:pAvg.max, std:pAvg.std, p50:p50s.p50, p95:p95s.p95},
-        loss_avg: lossVals.length? (lossVals.reduce((a,b)=>a+b,0)/lossVals.length): null
+        dl: {avg:sDL.avg,min:sDL.min,max:sDL.max,std:sDL.std},
+        ul: {avg:sUL.avg,min:sUL.min,max:sUL.max,std:sUL.std},
+        ping: {avg:pAvg.avg,min:pAvg.min,max:pAvg.max,std:pAvg.std,p50:p50s.p50,p95:p95s.p95},
+        loss_avg: lossVals.length ? lossVals.reduce((a,b)=>a+b,0)/lossVals.length : null
       };
     }
     download('wifi_summary.json', JSON.stringify(summary, null, 2), 'application/json');
   }
-
-  exportJsonBtn?.addEventListener('click', ()=>{
-    const out = results.slice(0,1000);
-    download('wifi_recent.json', JSON.stringify(out, null, 2), 'application/json');
-  });
-  clearResultsBtn?.addEventListener('click', ()=>{
-    results = []; resultsList && (resultsList.innerHTML=''); if(chart){ chart.data.labels=[]; chart.data.datasets.forEach(ds=>ds.data=[]); chart.update(); } updateSummary();
-  });
+  exportJsonBtn?.addEventListener('click', ()=> download('wifi_recent.json', JSON.stringify(results.slice(0,1000), null, 2), 'application/json'));
+  clearResultsBtn?.addEventListener('click', ()=> { results=[]; resultsList && (resultsList.innerHTML=''); if(chart){ chart.data.labels=[]; chart.data.datasets.forEach(ds=>ds.data=[]); chart.update(); } updateSummary(); });
   exportCsvWideBtn?.addEventListener('click', exportCsvWide);
   exportCsvLongBtn?.addEventListener('click', exportCsvLong);
   exportSummaryJsonBtn?.addEventListener('click', exportSummaryJson);
 
   function updateSummary(){
-    const rssiVals = results.map(x=>num(x.rssi)).filter(v=>v!=null);
-    const dlVals = results.map(x=>num(x.iperf_dl_mbps)).filter(v=>v!=null);
-    const ulVals = results.map(x=>num(x.iperf_ul_mbps)).filter(v=>v!=null);
-    const pingVals = results.map(x=>num(x.ping_avg)).filter(v=>v!=null);
+    const n = v => { const x = Number(v); return isNaN(x)? null : x; };
     const avg = arr => arr.length ? (arr.reduce((a,b)=>a+b,0)/arr.length) : null;
+    const rssiVals = results.map(x=>n(x.rssi)).filter(v=>v!=null);
+    const dlVals = results.map(x=>n(x.iperf_dl_mbps)).filter(v=>v!=null);
+    const ulVals = results.map(x=>n(x.iperf_ul_mbps)).filter(v=>v!=null);
+    const pingVals = results.map(x=>n(x.ping_avg)).filter(v=>v!=null);
     avgRssi && (avgRssi.textContent = rssiVals.length ? Math.round(avg(rssiVals)) + ' dBm' : '—');
     avgDl && (avgDl.textContent = dlVals.length ? avg(dlVals).toFixed(2) + ' Mbps' : '—');
     avgUl && (avgUl.textContent = ulVals.length ? avg(ulVals).toFixed(2) + ' Mbps' : '—');
     avgPing && (avgPing.textContent = pingVals.length ? avg(pingVals).toFixed(2) + ' ms' : '—');
   }
 
-  // Initialize gauge text
+  // Init gauge display text
   createGauge(0,200);
   updateSummary();
 
