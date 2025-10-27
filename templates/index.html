@@ -4,85 +4,87 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
   <meta name="theme-color" content="#0b74ff"/>
-  <title>WiFi Survey — Mobile</title>
+  <title>WiFi Survey — Mobile Pro</title>
 
-  <!-- Google Font -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-
   <link rel="stylesheet" href="/static/style.css">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
 </head>
 <body>
   <div class="app">
-    <header class="topbar">
+
+    <header class="topbar" role="banner">
       <div class="brand">
         <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2L3 7v6c0 5 3.7 9.6 9 11 5.3-1.4 9-6 9-11V7l-9-5z"></path></svg>
         <div>
           <div class="title">WiFi Survey</div>
-          <div class="subtitle">Mediciones desde Termux · adaptable móvil</div>
+          <div class="subtitle">Mediciones desde Termux · Mobile Pro</div>
         </div>
       </div>
 
-      <div class="actions">
-        <button id="themeToggle" class="icon-btn" title="Alternar tema" aria-label="Alternar tema">
-          <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><path fill="currentColor" d="M12 3a1 1 0 0 1 1 1v1a1 1 0 0 1-2 0V4a1 1 0 0 1 1-1zm0 16a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM4.22 5.47a1 1 0 0 1 1.41 0l0.7 0.7a1 1 0 0 1-1.42 1.42l-0.7-0.7a1 1 0 0 1 0-1.42zM17.66 18.9a1 1 0 0 1 0 1.41l-0.7 0.7a1 1 0 1 1-1.42-1.42l0.7-0.7a1 1 0 0 1 1.42 0z"/></svg>
-        </button>
-        <div id="statusDot" class="status offline" title="Estado: esperando" aria-hidden="true"></div>
+      <div class="top-actions">
+        <div id="statusDot" class="status offline" aria-hidden="true" title="Estado"></div>
+        <button id="themeToggle" class="icon-btn" aria-label="Alternar tema">🌓</button>
       </div>
     </header>
 
-    <main class="container">
-      <section class="card quick" aria-labelledby="quick-header">
-        <div class="section-header">
-          <h2 id="quick-header">Medición rápida</h2>
+    <main class="container" role="main">
+
+      <!-- Quick card -->
+      <section class="card quick" aria-labelledby="quick-h">
+        <div class="card-header">
+          <h2 id="quick-h">Medición rápida</h2>
+          <small class="muted">Ejecuta una medición puntual</small>
         </div>
 
-        <div class="row">
-          <div class="left">
-            <label class="label" for="device">Nombre del dispositivo</label>
-            <input id="device" type="text" placeholder="S24FE" value="S24FE" autocomplete="off" />
+        <div class="grid">
+          <div class="form-group">
+            <label for="device">Dispositivo</label>
+            <input id="device" type="text" value="S24FE" inputmode="text" autocomplete="off">
           </div>
-          <div class="right">
-            <label class="label" for="point">Punto</label>
-            <input id="point" type="text" placeholder="A1" value="P1" autocomplete="off" />
+          <div class="form-group">
+            <label for="point">Punto</label>
+            <input id="point" type="text" value="P1" inputmode="text" autocomplete="off">
+          </div>
+          <div class="form-group narrow">
+            <label for="run">Repetición</label>
+            <input id="run" type="number" min="1" value="1" inputmode="numeric">
+          </div>
+
+          <div class="controls" aria-hidden="false">
+            <button id="runBtn" class="btn primary large" aria-live="polite">Run</button>
+            <button id="downloadBtn" class="btn outline">CSV</button>
           </div>
         </div>
 
-        <div class="row actions-row">
-          <div class="run-controls">
-            <label class="label" for="run">Repetición</label>
-            <input id="run" type="number" min="1" value="1" class="small-input" />
-            <button id="runBtn" class="btn primary large" aria-live="polite">Run point</button>
-          </div>
-
-          <div class="secondary-controls">
-            <button id="downloadBtn" class="btn">Descargar CSV</button>
-            <button id="showRecentBtn" class="btn" id="showRecent">Resultados</button>
-          </div>
-        </div>
-
-        <div id="runToast" class="toast" hidden aria-live="assertive"></div>
       </section>
 
-      <section class="card survey" aria-labelledby="survey-header">
-        <div class="section-header">
-          <h3 id="survey-header">Encuesta</h3>
-          <div class="hint">Pega puntos separados por espacios o comas</div>
+      <!-- Survey card -->
+      <section class="card survey" aria-labelledby="survey-h">
+        <div class="card-header">
+          <h3 id="survey-h">Encuesta</h3>
+          <small class="muted">Automatiza varias mediciones</small>
         </div>
 
-        <label class="label" for="survey_device">Dispositivo de encuesta</label>
-        <input id="survey_device" type="text" value="S24FE" class="small-input" />
+        <div class="form-row">
+          <label for="survey_device">Nombre del equipo</label>
+          <input id="survey_device" type="text" value="S24FE" />
+        </div>
 
-        <textarea id="points" placeholder="A1 A2 A3 B1 B2 B3" aria-label="Lista de puntos">A1 A2 A3 B1 B2 B3</textarea>
+        <div class="form-row">
+          <label for="points">Puntos (espacios o comas)</label>
+          <textarea id="points" placeholder="A1 A2 A3 B1 B2"></textarea>
+        </div>
 
-        <div class="row compact">
-          <div>
-            <label class="label" for="repeats">Repeticiones</label>
-            <input id="repeats" type="number" min="1" value="2" class="small-input"/>
+        <div class="form-row compact">
+          <div class="form-group narrow">
+            <label for="repeats">Repeticiones</label>
+            <input id="repeats" type="number" min="1" value="2">
           </div>
-          <div style="flex:1"></div>
+
           <div class="survey-actions">
-            <button id="startSurvey" class="btn primary">Iniciar encuesta</button>
+            <button id="startSurvey" class="btn primary">Iniciar</button>
             <button id="cancelTask" class="btn danger" disabled>Cancelar</button>
           </div>
         </div>
@@ -90,43 +92,51 @@
         <div id="surveyArea" class="survey-area" hidden>
           <div class="survey-meta">
             <div id="surveyStatus" class="muted">Sin tarea</div>
-            <progress id="progressBar" value="0" max="100" aria-valuemin="0" aria-valuemax="100"></progress>
+            <progress id="progressBar" value="0" max="100"></progress>
           </div>
-          <div id="surveyLog" class="log small" aria-live="polite">Logs de encuesta</div>
+          <div id="surveyLog" class="log" aria-live="polite">Logs</div>
         </div>
       </section>
 
-      <section class="card results" aria-labelledby="results-header">
-        <div class="section-header">
-          <h3 id="results-header">Resultados recientes</h3>
-          <div class="hint">Últimas mediciones (guardadas en CSV y raw_results)</div>
+      <!-- Results card -->
+      <section class="card results" aria-labelledby="results-h">
+        <div class="card-header">
+          <h3 id="results-h">Resultados recientes</h3>
+          <small class="muted">Últimas mediciones</small>
         </div>
 
         <div id="resultsList" class="results-list" role="list" aria-live="polite"></div>
 
-        <div class="charts">
+        <div class="charts-row">
           <div class="chart-card">
-            <canvas id="throughputChart" height="120" aria-label="Gráfico de throughput"></canvas>
+            <canvas id="throughputChart" aria-label="Gráfico de throughput"></canvas>
           </div>
-          <div class="stats-card">
-            <h4>Resumen</h4>
-            <div id="summary" class="summary" role="region" aria-label="Resumen de métricas">
-              <div><strong id="avgRssi">—</strong><div class="muted">RSSI med</div></div>
-              <div><strong id="avgDl">—</strong><div class="muted">DL avg</div></div>
-              <div><strong id="avgUl">—</strong><div class="muted">UL avg</div></div>
+          <div class="summary-card">
+            <h4>Resumen rápido</h4>
+            <div class="summary-grid">
+              <div><div class="big" id="avgRssi">—</div><div class="muted">RSSI med</div></div>
+              <div><div class="big" id="avgDl">—</div><div class="muted">DL avg</div></div>
+              <div><div class="big" id="avgUl">—</div><div class="muted">UL avg</div></div>
             </div>
-            <button id="exportJsonBtn" class="btn">Exportar JSON recientes</button>
+            <div class="summary-actions">
+              <button id="exportJsonBtn" class="btn">Exportar JSON</button>
+              <button id="clearResultsBtn" class="btn outline">Limpiar</button>
+            </div>
           </div>
         </div>
       </section>
 
     </main>
 
-    <footer class="footer">
-      <div class="muted">Servidor: <span id="serverIp">192.168.1.10</span> · UI local</div>
-    </footer>
-  </div>
+    <nav class="bottombar" role="navigation" aria-label="Navegación inferior">
+      <div class="nav-left">
+        <div class="muted">Servidor: <span id="serverIp">192.168.1.10</span></div>
+      </div>
+      <div class="nav-right">
+        <button id="fabRun" class="fab" title="Run rápido" aria-label="Run rápido">▶</button>
+      </div>
+    </nav>
 
-  <script src="/static/app.js" defer></script>
+  </div>
 </body>
 </html>
