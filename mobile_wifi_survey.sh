@@ -11,10 +11,10 @@ RAW_DIR="./raw_results"
 mkdir -p "$RAW_DIR"
 
 if [ ! -f "$OUTPUT_CSV" ]; then
-  echo "device,point_id,timestamp,lat,lon,ssid,bssid,frequency_mhz,rssi_dbm,link_speed_mbps,iperf_dl_mbps,iperf_ul_mbps,ping_avg_ms,ping_jitter_ms,ping_loss_pct,test_duration_s,notes" > "$OUTPUT_CSV"
+  echo "device,point_id,timestamp,ssid,bssid,frequency_mhz,rssi_dbm,link_speed_mbps,iperf_dl_mbps,iperf_ul_mbps,ping_avg_ms,ping_jitter_ms,ping_loss_pct,test_duration_s,notes" > "$OUTPUT_CSV"
 fi
 
-read -p "Nombre del dispositivo (p.ej. S24FE): " DEVICE_NAME
+read -p "Identificador del equipo bajo prueba (DUT) o nombre del teléfono que ejecuta la prueba (p.ej. AP-Lobby o S24FE): " DEVICE_NAME
 echo "Introduce lista de puntos (separados por espacios), ejemplo: A1 A2 A3 B1 B2"
 read -p "Introduce lista de puntos: " -a POINTS
 
@@ -32,10 +32,6 @@ for POINT in "${POINTS[@]}"; do
     RSSI=$(echo "$WIFI_JSON" | jq -r '.rssi // "N/A"')
     FREQ=$(echo "$WIFI_JSON" | jq -r '.frequency // "N/A"')
     LINK_SPEED=$(echo "$WIFI_JSON" | jq -r '.linkSpeed // "N/A"')
-
-    LOC_JSON=$(termux-location -p gps,network -n 1 2>/dev/null || echo "{}")
-    LAT=$(echo "$LOC_JSON" | jq -r '.latitude // empty')
-    LON=$(echo "$LOC_JSON" | jq -r '.longitude // empty')
 
     # Run ping and capture individual RTTs
     PING_OUT=$(ping -c 50 "$SERVER_IP" 2>&1 || echo "")
@@ -74,7 +70,7 @@ for POINT in "${POINTS[@]}"; do
           --argjson times "$TIMES_JSON" \
           '{wifi: $wifi, iperf_dl: $dl, iperf_ul: $ul, ping: {raw: $ping_out, times: $times, avg_ms: $avg, jitter_ms: $jitter, loss: $loss}}' > "$RAW_FILE" 2>/dev/null || echo "{}" > "$RAW_FILE"
 
-    echo "${DEVICE_NAME},${POINT},${TIMESTAMP},${LAT},${LON},\"${SSID}\",${BSSID},${FREQ},${RSSI},${LINK_SPEED},${IPERF_DL_Mbps},${IPERF_UL_Mbps},${PING_AVG},${PING_JITTER},${PING_LOSS},${IPERF_DURATION},run:${RUN}" >> "$OUTPUT_CSV"
+    echo "${DEVICE_NAME},${POINT},${TIMESTAMP},\"${SSID}\",${BSSID},${FREQ},${RSSI},${LINK_SPEED},${IPERF_DL_Mbps},${IPERF_UL_Mbps},${PING_AVG},${PING_JITTER},${PING_LOSS},${IPERF_DURATION},run:${RUN}" >> "$OUTPUT_CSV"
 
     echo "Guardado: punto $POINT run $RUN -> $RAW_FILE"
     sleep 1

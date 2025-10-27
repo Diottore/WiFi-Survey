@@ -7,7 +7,6 @@ import json
 import uuid
 import threading
 import subprocess
-import re
 from datetime import datetime
 from flask import Flask, request, jsonify, send_file, render_template, abort
 from flask_cors import CORS
@@ -27,7 +26,7 @@ os.makedirs(RAW_DIR, exist_ok=True)
 app = Flask(__name__, template_folder="templates", static_folder="static")
 CORS(app)
 
-CSV_HEADER = ["device","point_id","timestamp","lat","lon","ssid","bssid","frequency_mhz","rssi_dbm","link_speed_mbps","iperf_dl_mbps","iperf_ul_mbps","ping_avg_ms","ping_jitter_ms","ping_loss_pct","test_duration_s","notes"]
+CSV_HEADER = ["device","point_id","timestamp","ssid","bssid","frequency_mhz","rssi_dbm","link_speed_mbps","iperf_dl_mbps","iperf_ul_mbps","ping_avg_ms","ping_jitter_ms","ping_loss_pct","test_duration_s","notes"]
 if not os.path.exists(CSV_FILE):
     with open(CSV_FILE, "w", newline='') as f:
         writer = csv.writer(f)
@@ -50,10 +49,9 @@ def parse_ping_stats(ping_output):
     # Extract individual RTT times in ms
     times = []
     for line in ping_output.splitlines():
-        m = re.search(r"time=([0-9]+\.?[0-9]*)", line)
-        if m:
+        if "time=" in line:
             try:
-                times.append(float(m.group(1)))
+                times.append(float(line.split("time=")[1].split()[0]))
             except:
                 pass
     ping_avg = None
@@ -70,9 +68,7 @@ def parse_ping_stats(ping_output):
     # packet loss
     for line in ping_output.splitlines():
         if 'packet loss' in line:
-            parts = line.split(',')
-            if len(parts) >= 3:
-                ping_loss = parts[2].strip()
+            ping_loss = line.split(",")[2].strip()
     return ping_avg, ping_jitter, ping_loss, times
 
 def measure_point(device, point, run_index):
@@ -85,12 +81,6 @@ def measure_point(device, point, run_index):
     rssi = wifi_json.get("rssi", "")
     freq = wifi_json.get("frequency", "")
     link_speed = wifi_json.get("linkSpeed", "")
-
-    loc_out, loc_err, code = run_cmd("termux-location -p gps,network -n 1")
-    try: loc_json = json.loads(loc_out) if loc_out else {}
-    except: loc_json = {}
-    lat = loc_json.get("latitude", "")
-    lon = loc_json.get("longitude", "")
 
     # Ping
     ping_out, ping_err, code = run_cmd(f"ping -c 30 {SERVER_IP}", timeout=90)
@@ -122,9 +112,9 @@ def measure_point(device, point, run_index):
 
     raw_file = os.path.join(RAW_DIR, f"{point}_{run_index}_{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.json")
     with open(raw_file, "w") as f:
-        json.dump({"wifi": wifi_json, "location": loc_json, "ping": {"output": ping_out, "times": ping_times, "avg_ms": ping_avg, "jitter_ms": ping_jitter, "loss": ping_loss}, "iperf_dl": dl_json, "iperf_ul": ul_json}, f, indent=2)
+        json.dump({"wifi": wifi_json, "ping": {"output": ping_out, "times": ping_times, "avg_ms": ping_avg, "jitter_ms": ping_jitter, "loss": ping_loss}, "iperf_dl": dl_json, "iperf_ul": ul_json}, f, indent=2)
 
-    csv_row = [device, point, timestamp, lat, lon, ssid, bssid, freq, rssi, link_speed, dl_mbps, ul_mbps, ping_avg, ping_jitter, ping_loss, IPERF_DURATION, f"run:{run_index}"]
+    csv_row = [device, point, timestamp, ssid, bssid, freq, rssi, link_speed, dl_mbps, ul_mbps, ping_avg, ping_jitter, ping_loss, IPERF_DURATION, f"run:{run_index}"]
     with open(CSV_FILE, "a", newline='') as f:
         writer = csv.writer(f)
         writer.writerow(csv_row)
@@ -151,15 +141,12 @@ def start_survey():
     device = payload.get("device", "phone")
     points = payload.get("points", [])
     repeats = int(payload.get("repeats", 1))
-    manual = bool(payload.get("manual", True))
     if not points:
         return jsonify({"ok": False, "error": "No points provided"}), 400
 
     task_id = str(uuid.uuid4())
     with tasks_lock:
-        tasks[task_id] = {"status": "queued", "mode": ("manual" if manual else "auto"), "total": len(points)*repeats, "done": 0, "logs": [], "results": []}
-        # per-task event for manual proceed/cancel
-        tasks[task_id]["event"] = threading.Event()
+        tasks[task_id] = {"status": "queued", "total": len(points)*repeats, "done": 0, "logs": [], "results": []}
 
     def worker():
         with tasks_lock:
@@ -171,23 +158,6 @@ def start_survey():
                 log_line = f"[{idx}/{len(points)*repeats}] Preparando {p} (run {r})..."
                 with tasks_lock:
                     tasks[task_id]["logs"].append(log_line)
-
-                # if manual mode, wait for user confirmation before measuring this point/run
-                if tasks[task_id].get("mode") == "manual":
-                    with tasks_lock:
-                        tasks[task_id]["status"] = "waiting"
-                        tasks[task_id]["logs"].append(f"Esperando confirmación para {p} run {r}...")
-                    # wait without holding the tasks_lock
-                    evt = tasks[task_id].get("event")
-                    if evt:
-                        evt.clear()
-                        evt.wait()  # blocked until /task_proceed or cancel sets the event
-                    with tasks_lock:
-                        if tasks[task_id].get("status") == "cancelled":
-                            tasks[task_id]["logs"].append("Tarea cancelada por usuario")
-                            return
-                        tasks[task_id]["status"] = "running"
-
                 try:
                     res = measure_point(device, p, r)
                     with tasks_lock:
@@ -204,40 +174,12 @@ def start_survey():
     t.start()
     return jsonify({"ok": True, "task_id": task_id})
 
-@app.route("/task_proceed/<task_id>", methods=["POST"])
-def task_proceed(task_id):
-    with tasks_lock:
-        if task_id not in tasks:
-            return jsonify({"ok": False, "error": "task not found"}), 404
-        t = tasks[task_id]
-        # set status back to running and release event
-        t["status"] = "running"
-        t["logs"].append("Usuario indicó continuar")
-        evt = t.get("event")
-        if evt:
-            evt.set()
-    return jsonify({"ok": True})
-
-@app.route("/task_cancel/<task_id>", methods=["POST"])
-def task_cancel(task_id):
-    with tasks_lock:
-        if task_id not in tasks:
-            return jsonify({"ok": False, "error": "task not found"}), 404
-        tasks[task_id]["status"] = "cancelled"
-        tasks[task_id]["logs"].append("Cancelado por solicitud del usuario")
-        evt = tasks[task_id].get("event")
-        if evt:
-            evt.set()
-    return jsonify({"ok": True})
-
 @app.route("/task_status/<task_id>")
 def task_status(task_id):
     with tasks_lock:
         if task_id not in tasks:
             return jsonify({"ok": False, "error": "task not found"}), 404
-        # do not include the event object in the JSON response
-        t = {k: v for k, v in tasks[task_id].items() if k != "event"}
-        return jsonify(t)
+        return jsonify(tasks[task_id])
 
 @app.route("/download_csv")
 def download_csv():
