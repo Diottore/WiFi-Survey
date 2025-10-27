@@ -42,6 +42,23 @@
   const runProgressFill = $('runProgressFill'), progressPct = $('progressPct'), timeRemainingEl = $('timeRemaining'), liveSummary = $('liveSummary');
   const instDlEl = $('instDl'), instUlEl = $('instUl'), instPingEl = $('instPing'), instPing50El = $('instPing50'), instPing95El = $('instPing95'), instLossEl = $('instLoss');
   const showLiveQuick = $('showLiveQuick'), showLiveSurvey = $('showLiveSurvey'), hideLivePanelBtn = $('hideLivePanel');
+  
+  // Hide/Show live panel handlers
+  hideLivePanelBtn && hideLivePanelBtn.addEventListener('click', ()=> {
+    liveVisuals && liveVisuals.classList.remove('show');
+  });
+  showLiveQuick && showLiveQuick.addEventListener('click', ()=> {
+    if(liveVisuals && !liveVisuals.classList.contains('show')) {
+      liveVisuals.classList.add('show');
+      ensureLiveMiniChart();
+    }
+  });
+  showLiveSurvey && showLiveSurvey.addEventListener('click', ()=> {
+    if(liveVisuals && !liveVisuals.classList.contains('show')) {
+      liveVisuals.classList.add('show');
+      ensureLiveMiniChart();
+    }
+  });
   const surveyDeviceEl = $('survey_device'), manualCheckbox = $('manual_confirm'), proceedBtn = $('proceedBtn');
 
   // Resultados - controles
@@ -345,11 +362,14 @@
       updateSummary();
     }
 
-    // Reset progreso y buffer de muestras para la próxima prueba
-    runProgressFill && (runProgressFill.style.width = `0%`);
-    progressPct && (progressPct.textContent = `0%`);
+    // Actualizar progreso a 100% y mantener gráfica en vivo visible
+    runProgressFill && (runProgressFill.style.width = `100%`);
+    progressPct && (progressPct.textContent = `100%`);
     timeRemainingEl && (timeRemainingEl.textContent = '00:00');
-    setTimeout(()=> liveChartReset(), 500);
+    liveSummary && (liveSummary.textContent = 'Prueba completada - Visualiza la gráfica arriba');
+    
+    // NO resetear la gráfica en vivo inmediatamente - dejar visible para revisión
+    // El usuario puede ocultarla manualmente o se reseteará al iniciar una nueva prueba
   }
 
   function mapFinalToResult(res){
@@ -379,11 +399,103 @@
       <div style="width:120px;text-align:right">${r.iperf_dl_mbps!=null? Number(r.iperf_dl_mbps).toFixed(2):'—'} Mbps</div>
       <div style="width:120px;text-align:right">${r.iperf_ul_mbps!=null? Number(r.iperf_ul_mbps).toFixed(2):'—'}</div>
       <div style="width:80px;text-align:right">${r.ping_avg!=null? r.ping_avg.toFixed(2):'—'}</div>
+      <div style="width:100px;text-align:center">
+        <button class="btn small view-samples-btn" data-index="${results.length-1}" style="padding:4px 8px;font-size:.85rem;">Ver gráfica</button>
+      </div>
       <div style="width:60px;text-align:center"><a class="muted" href="/raw/${(r.raw_file||'').split('/').pop()}" target="_blank">raw</a></div>
     `;
     if(resultsList) resultsList.prepend(card);
+    
+    // Add event listener to view samples button
+    const viewBtn = card.querySelector('.view-samples-btn');
+    if(viewBtn){
+      viewBtn.addEventListener('click', ()=> showResultSamples(results.length-1-parseInt(viewBtn.getAttribute('data-index'))));
+    }
+    
     if(emptyState) emptyState.style.display = results.length ? 'none' : 'block';
     refreshResultsLayout();
+  }
+  
+  // Modal para ver muestras de un resultado individual
+  function showResultSamples(index){
+    const r = results[index];
+    if(!r || !r.samples || !r.samples.length){
+      alert('No hay datos de muestras disponibles para este resultado');
+      return;
+    }
+    
+    // Crear modal si no existe
+    let modal = $('samplesModal');
+    if(!modal){
+      modal = document.createElement('div');
+      modal.id = 'samplesModal';
+      modal.className = 'modal-backdrop';
+      modal.innerHTML = `
+        <div class="modal-box card" style="max-width:900px; margin:40px auto; padding:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+            <div>
+              <h3 style="margin:0;">Gráfica de prueba</h3>
+              <div class="muted" id="samplesModalSubtitle"></div>
+            </div>
+            <button id="closeSamplesModal" class="btn small">Cerrar</button>
+          </div>
+          <div id="samplesChartWrap" style="height:400px;">
+            <div id="samplesChart" style="width:100%;height:100%;"></div>
+          </div>
+          <div style="margin-top:12px; padding:10px; background:#f8f9fa; border-radius:8px;">
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:10px;">
+              <div><small class="muted">Punto</small><div id="samplePoint" style="font-weight:600;">—</div></div>
+              <div><small class="muted">DL avg</small><div id="sampleDL" style="font-weight:600;">—</div></div>
+              <div><small class="muted">UL avg</small><div id="sampleUL" style="font-weight:600;">—</div></div>
+              <div><small class="muted">Ping avg</small><div id="samplePing" style="font-weight:600;">—</div></div>
+              <div><small class="muted">RSSI</small><div id="sampleRSSI" style="font-weight:600;">—</div></div>
+              <div><small class="muted">SSID</small><div id="sampleSSID" style="font-weight:600;">—</div></div>
+            </div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      $('closeSamplesModal').addEventListener('click', ()=> modal.setAttribute('hidden',''));
+      modal.addEventListener('click', (e)=> { if(e.target === modal) modal.setAttribute('hidden',''); });
+    }
+    
+    // Actualizar datos del modal
+    $('samplesModalSubtitle').textContent = `${r.point || 'N/A'} - ${new Date(r.timestamp).toLocaleString()}`;
+    $('samplePoint').textContent = r.point || '—';
+    $('sampleDL').textContent = r.iperf_dl_mbps!=null ? `${Number(r.iperf_dl_mbps).toFixed(2)} Mbps` : '—';
+    $('sampleUL').textContent = r.iperf_ul_mbps!=null ? `${Number(r.iperf_ul_mbps).toFixed(2)} Mbps` : '—';
+    $('samplePing').textContent = r.ping_avg!=null ? `${Number(r.ping_avg).toFixed(2)} ms` : '—';
+    $('sampleRSSI').textContent = r.rssi!=null ? `${r.rssi} dBm` : '—';
+    $('sampleSSID').textContent = r.ssid || '—';
+    
+    // Crear/actualizar gráfica
+    const chartEl = $('samplesChart');
+    let samplesChart = echarts.getInstanceByDom(chartEl);
+    if(!samplesChart) samplesChart = echarts.init(chartEl);
+    
+    const times = r.samples.map(s=> s.t);
+    const dlData = r.samples.map(s=> s.dl ?? null);
+    const ulData = r.samples.map(s=> s.ul ?? null);
+    const pingData = r.samples.map(s=> s.ping ?? null);
+    
+    samplesChart.setOption({
+      grid:{left:50,right:50,top:40,bottom:40},
+      tooltip:{trigger:'axis'},
+      legend:{ top:5, textStyle:{fontSize:12} },
+      xAxis:{ type:'category', name:'Tiempo (s)', boundaryGap:false, data:times },
+      yAxis:[
+        { type:'value', name:'Mbps', min:0, axisLabel:{formatter: '{value}'} },
+        { type:'value', name:'ms', min:0, axisLabel:{formatter: '{value}'} }
+      ],
+      series:[
+        { name:'DL', type:'line', smooth:true, areaStyle:{opacity:0.15}, itemStyle:{color:'#0b74ff'}, yAxisIndex:0, data:dlData },
+        { name:'UL', type:'line', smooth:true, areaStyle:{opacity:0.12}, itemStyle:{color:'#06b6d4'}, yAxisIndex:0, data:ulData },
+        { name:'Ping', type:'line', smooth:true, itemStyle:{color:'#ef4444'}, lineStyle:{type:'dashed'}, yAxisIndex:1, data:pingData }
+      ]
+    });
+    
+    modal.removeAttribute('hidden');
+    setTimeout(()=> samplesChart.resize(), 100);
   }
 
   // Run quick
@@ -395,8 +507,12 @@
       const j=await res.json();
       if(!j || !j.ok){ liveSummary && (liveSummary.textContent = `Error: ${j?.error||'unknown'}`); runBtn.disabled=false; return; }
       lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
-      liveChartReset(); if(liveVisuals && !liveVisuals.classList.contains('show')) { liveVisuals.classList.add('show'); ensureLiveMiniChart(); }
-      liveSummary && (liveSummary.textContent='Tarea iniciada, esperando actualizaciones...'); openSseForTask(j.task_id); setMode('results');
+      // Resetear gráfica en vivo al iniciar nueva prueba
+      liveChartReset(); 
+      if(liveVisuals && !liveVisuals.classList.contains('show')) { liveVisuals.classList.add('show'); ensureLiveMiniChart(); }
+      liveSummary && (liveSummary.textContent='Tarea iniciada, esperando actualizaciones...'); 
+      openSseForTask(j.task_id); 
+      setMode('results');
     }catch(e){ liveSummary && (liveSummary.textContent = `Error: ${e.message}`); } finally{ runBtn.disabled=false; }
   });
 
@@ -413,7 +529,9 @@
       if(!j.ok){ surveyLog && (surveyLog.textContent='Error: ' + (j.error||'')); startSurveyBtn.disabled=false; return; }
       lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
       cancelTaskBtn && (cancelTaskBtn.disabled=false);
-      liveChartReset(); if(liveVisuals && !liveVisuals.classList.contains('show')) { liveVisuals.classList.add('show'); ensureLiveMiniChart(); }
+      // Resetear gráfica en vivo al iniciar nueva encuesta
+      liveChartReset(); 
+      if(liveVisuals && !liveVisuals.classList.contains('show')) { liveVisuals.classList.add('show'); ensureLiveMiniChart(); }
       openSseForTask(j.task_id); surveyArea && (surveyArea.hidden=false); setMode('results');
     }catch(e){ surveyLog && (surveyLog.textContent='Error al iniciar: '+e); } finally{ startSurveyBtn.disabled=false; }
   });
@@ -497,6 +615,24 @@
 
   // Init mínimos
   updateSummary();
+  
+  // Health check periódico
+  async function checkHealth(){
+    try{
+      const r = await fetch('/_health');
+      const h = await r.json();
+      const statusEl = document.querySelector('.status');
+      if(statusEl){
+        if(h.status === 'ok') statusEl.className = 'status online';
+        else statusEl.className = 'status offline';
+      }
+      // Log warnings si hay problemas
+      if(!h.checks?.server_reachable) console.warn('Server not reachable:', h.checks?.server_error);
+      if(!h.checks?.iperf3_available) console.warn('iperf3 not available');
+    }catch(e){ console.warn('Health check failed:', e); }
+  }
+  checkHealth();
+  setInterval(checkHealth, 30000); // Check every 30s
 
   // Expose (debug)
   window.__ws = Object.assign(window.__ws || {}, {

@@ -91,14 +91,29 @@ if not os.path.exists(CSV_FILE):
 tasks = {}
 tasks_lock = threading.Lock()
 
-def run_cmd(cmd, timeout=300):
-    try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-        return r.stdout, r.stderr, r.returncode
-    except subprocess.TimeoutExpired:
-        return "", "timeout", -1
-    except Exception as e:
-        return "", str(e), -1
+def run_cmd(cmd, timeout=300, retries=0):
+    """Run command with optional retry logic"""
+    attempt = 0
+    max_attempts = retries + 1
+    
+    while attempt < max_attempts:
+        try:
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+            return r.stdout, r.stderr, r.returncode
+        except subprocess.TimeoutExpired:
+            attempt += 1
+            if attempt >= max_attempts:
+                return "", "timeout after retries", -1
+            logger.warning(f"Command timeout, retry {attempt}/{retries}")
+            time.sleep(1)
+        except Exception as e:
+            attempt += 1
+            if attempt >= max_attempts:
+                return "", str(e), -1
+            logger.warning(f"Command error: {e}, retry {attempt}/{retries}")
+            time.sleep(1)
+    
+    return "", "max retries exceeded", -1
 
 def parse_ping_time(line):
     m = re.search(r'time=([\d\.]+)', line)
@@ -131,6 +146,25 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
         tasks[task_id]["_last_sample_ts"] = 0.0
 
     start_ts = time.time()
+
+    # Verificar conectividad con el servidor antes de iniciar
+    try:
+        ping_check = subprocess.run(
+            ["ping", "-c", "1", "-W", "2", SERVER_IP],
+            capture_output=True,
+            timeout=3
+        )
+        if ping_check.returncode != 0:
+            with tasks_lock:
+                tasks[task_id]["status"] = "error"
+                tasks[task_id]["logs"].append(f"Error: No se puede alcanzar el servidor {SERVER_IP}")
+                tasks[task_id]["seq"] = tasks[task_id].get("seq", 0) + 1
+            logger.error(f"Server {SERVER_IP} is not reachable")
+            return
+    except Exception as e:
+        with tasks_lock:
+            tasks[task_id]["logs"].append(f"Error verificando servidor: {e}")
+        logger.warning(f"Server check failed: {e}")
 
     # Intentar metadata WiFi (no bloqueante)
     wifi_json = {}
@@ -581,6 +615,55 @@ def survey_config():
         "IPERF_PARALLEL": IPERF_PARALLEL,
         "SERVER_IP": SERVER_IP
     })
+
+@app.route("/_health")
+def health_check():
+    """Health check endpoint - verify connectivity and dependencies"""
+    health = {
+        "status": "ok",
+        "checks": {},
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    # Check server connectivity
+    try:
+        result = subprocess.run(
+            ["ping", "-c", "1", "-W", "2", SERVER_IP],
+            capture_output=True,
+            timeout=3
+        )
+        health["checks"]["server_reachable"] = result.returncode == 0
+    except Exception as e:
+        health["checks"]["server_reachable"] = False
+        health["checks"]["server_error"] = str(e)
+    
+    # Check iperf3 availability
+    try:
+        result = subprocess.run(
+            ["which", "iperf3"],
+            capture_output=True,
+            timeout=2
+        )
+        health["checks"]["iperf3_available"] = result.returncode == 0
+    except Exception:
+        health["checks"]["iperf3_available"] = False
+    
+    # Check termux-api (if running on Android)
+    try:
+        result = subprocess.run(
+            ["which", "termux-wifi-connectioninfo"],
+            capture_output=True,
+            timeout=2
+        )
+        health["checks"]["termux_api_available"] = result.returncode == 0
+    except Exception:
+        health["checks"]["termux_api_available"] = False
+    
+    # Overall status
+    if not health["checks"].get("server_reachable") or not health["checks"].get("iperf3_available"):
+        health["status"] = "degraded"
+    
+    return jsonify(health)
 
 if __name__ == "__main__":
     logger.info(f"Starting WiFi Survey application on {FLASK_HOST}:{FLASK_PORT}")
