@@ -102,3 +102,22 @@ textarea{min-height:84px;resize:vertical;}
   --bg:#071026;--card:#071428;--text:#e6eef8;--muted:#9aa6b2;--primary:#3ea2ff;--accent:#2dd4bf;
   background:var(--bg)
 }
+
+/* results controls */
+.results-controls{margin-bottom:12px}
+.results-controls input[type="text"]{margin-bottom:6px}
+
+/* chart controls */
+.chart-controls{margin-bottom:10px;font-size:.9rem}
+
+/* modal */
+.modal{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px}
+.modal[hidden]{display:none}
+.modal-content{background:var(--card);border-radius:var(--radius);max-width:90vw;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 40px rgba(0,0,0,0.2)}
+.modal-header{display:flex;justify-content:space-between;align-items:center;padding:16px;border-bottom:1px solid #e6e9ef}
+.modal-header h3{margin:0}
+.modal-body{padding:16px;overflow:auto;flex:1}
+.modal-body pre{background:#f6f8fb;padding:12px;border-radius:8px;overflow:auto;max-height:60vh;font-size:.85rem;white-space:pre-wrap;word-wrap:break-word}
+
+/* badge */
+.badge{display:inline-block;padding:4px 8px;border-radius:6px;background:rgba(11,116,255,0.1);color:var(--primary);font-size:.85rem;font-weight:600}

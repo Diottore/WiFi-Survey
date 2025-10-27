@@ -40,12 +40,17 @@
   const exportJsonBtn = $('exportJsonBtn'), clearResultsBtn = $('clearResultsBtn'), statusDot = $('statusDot');
   const surveyDeviceEl = $('survey_device'), fabRun = $('fabRun');
   const manualCheckbox = $('manual_confirm'), proceedBtn = $('proceedBtn');
+  const searchResults = $('searchResults'), autoScrollToggle = $('autoScrollToggle');
+  const toggleDL = $('toggleDL'), toggleUL = $('toggleUL'), togglePing = $('togglePing');
+  const rawJsonModal = $('rawJsonModal'), closeModal = $('closeModal'), rawJsonContent = $('rawJsonContent');
 
   // Buffers and state
   let resultBuffer = [];
   let flushing = false;
   let results = [];
   let currentTaskId = null;
+  let filteredResults = [];  // for search functionality
+  let searchTerm = '';
 
   // Chart
   const ctx = document.getElementById('throughputChart').getContext('2d');
@@ -89,13 +94,13 @@
 
   function flushResults(){
     if(resultBuffer.length===0){ flushing=false; return; }
-    const frag = document.createDocumentFragment();
     while(resultBuffer.length){
       const r = resultBuffer.shift();
       r.point = norm(r.point);
       r.ssid = norm(r.ssid);
       r.bssid = norm(r.bssid);
       r.rssi = norm(r.rssi);
+      r.device = norm(r.device);
       r.iperf_dl_mbps = r.iperf_dl_mbps ?? r.dl_mbps ?? r.dl ?? 0;
       r.iperf_ul_mbps = r.iperf_ul_mbps ?? r.ul_mbps ?? r.ul ?? 0;
       r.ping_avg = r.ping_avg ?? r.ping_avg_ms ?? r.ping?.avg_ms ?? '';
@@ -103,26 +108,6 @@
 
       results.unshift(r);
       if(results.length>300) results.pop();
-
-      const card = document.createElement('div');
-      card.className = 'result-card';
-      card.innerHTML = `
-        <div class="result-left" role="listitem" style="min-width:0">
-          <div style="max-width:60vw;overflow-wrap:break-word">
-            <div class="title">${r.point}</div>
-            <div class="muted">${r.ssid}${r.bssid?(' · '+r.bssid):''}</div>
-          </div>
-        </div>
-        <div class="result-stats">
-          <div class="badge">RSSI ${r.rssi || '—'} dBm</div>
-          <div style="margin-top:6px"><strong>${r.iperf_dl_mbps ?? '—'}</strong> Mbps</div>
-          <div class="muted" style="font-size:.85rem">UL ${r.iperf_ul_mbps ?? '—'} Mbps</div>
-          <div style="margin-top:6px"><span class="muted">Ping: </span><strong>${r.ping_avg ?? '—'}</strong> ms</div>
-          <div style="margin-top:2px"><span class="muted">Jitter: </span><strong>${r.ping_jitter ?? '—'}</strong> ms</div>
-          <div style="margin-top:6px"><a href="/raw/${(r.raw_file||'').split('/').pop()}" target="_blank" class="muted">raw</a></div>
-        </div>
-      `;
-      frag.appendChild(card);
 
       const label = r.point || ('pt' + Date.now());
       chart.data.labels.unshift(label);
@@ -137,10 +122,77 @@
       }
     }
 
-    resultsList.prepend(frag);
+    renderResults();
     chart.update('active');
     updateSummary();
+    
+    // Auto-scroll to latest result if enabled
+    if(autoScrollToggle && autoScrollToggle.checked && resultsList.firstElementChild){
+      resultsList.firstElementChild.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    
     flushing = false;
+  }
+
+  function createResultCard(r){
+    const card = document.createElement('div');
+    card.className = 'result-card';
+    card.innerHTML = `
+      <div class="result-left" role="listitem" style="min-width:0">
+        <div style="max-width:60vw;overflow-wrap:break-word">
+          <div class="title">${r.point}</div>
+          <div class="muted">${r.ssid}${r.bssid?(' · '+r.bssid):''}</div>
+        </div>
+      </div>
+      <div class="result-stats">
+        <div class="badge">RSSI ${r.rssi || '—'} dBm</div>
+        <div style="margin-top:6px"><strong>${r.iperf_dl_mbps ?? '—'}</strong> Mbps</div>
+        <div class="muted" style="font-size:.85rem">UL ${r.iperf_ul_mbps ?? '—'} Mbps</div>
+        <div style="margin-top:6px"><span class="muted">Ping: </span><strong>${r.ping_avg ?? '—'}</strong> ms</div>
+        <div style="margin-top:2px"><span class="muted">Jitter: </span><strong>${r.ping_jitter ?? '—'}</strong> ms</div>
+        <div style="margin-top:6px"><a href="#" class="muted raw-link" data-raw-file="${r.raw_file||''}">raw</a></div>
+      </div>
+    `;
+    
+    // Add click handler for raw link
+    const rawLink = card.querySelector('.raw-link');
+    if(rawLink){
+      rawLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        openRawModal(r.raw_file);
+      });
+    }
+    
+    return card;
+  }
+
+  function renderResults(){
+    const frag = document.createDocumentFragment();
+    const resultsToRender = searchTerm ? filteredResults : results;
+    
+    resultsToRender.forEach(r => {
+      frag.appendChild(createResultCard(r));
+    });
+    
+    resultsList.innerHTML = '';
+    resultsList.appendChild(frag);
+  }
+
+  function filterResults(){
+    if(!searchTerm){
+      filteredResults = [];
+      renderResults();
+      return;
+    }
+    
+    const term = searchTerm.toLowerCase();
+    filteredResults = results.filter(r => {
+      return (r.point && r.point.toLowerCase().includes(term)) ||
+             (r.device && r.device.toLowerCase().includes(term)) ||
+             (r.ssid && r.ssid.toLowerCase().includes(term));
+    });
+    
+    renderResults();
   }
 
   function updateSummary(){
@@ -262,7 +314,64 @@
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'wifi_recent.json'; a.click();
     URL.revokeObjectURL(a.href);
   });
-  clearResultsBtn && clearResultsBtn.addEventListener('click', ()=> { results=[]; resultsList.innerHTML=''; chart.data.labels=[]; chart.data.datasets.forEach(ds=>ds.data=[]); chart.update(); updateSummary(); });
+  clearResultsBtn && clearResultsBtn.addEventListener('click', ()=> { 
+    results=[]; 
+    filteredResults=[];
+    searchTerm='';
+    if(searchResults) searchResults.value = '';
+    resultsList.innerHTML=''; 
+    chart.data.labels=[]; 
+    chart.data.datasets.forEach(ds=>ds.data=[]); 
+    chart.update(); 
+    updateSummary(); 
+  });
+
+  // Dataset visibility toggles
+  toggleDL && toggleDL.addEventListener('change', ()=> {
+    chart.setDatasetVisibility(0, toggleDL.checked);
+    chart.update();
+  });
+  toggleUL && toggleUL.addEventListener('change', ()=> {
+    chart.setDatasetVisibility(1, toggleUL.checked);
+    chart.update();
+  });
+  togglePing && togglePing.addEventListener('change', ()=> {
+    chart.setDatasetVisibility(2, togglePing.checked);
+    chart.update();
+  });
+
+  // Search/filter functionality
+  searchResults && searchResults.addEventListener('input', debounce((e)=> {
+    searchTerm = e.target.value.trim();
+    filterResults();
+  }, 300));
+
+  // Modal functions
+  function openRawModal(rawFile){
+    if(!rawFile || !rawJsonModal) return;
+    const filename = (rawFile||'').split('/').pop();
+    fetch(`/raw/${filename}`)
+      .then(r => r.json())
+      .then(data => {
+        rawJsonContent.textContent = JSON.stringify(data, null, 2);
+        rawJsonModal.hidden = false;
+      })
+      .catch(e => {
+        rawJsonContent.textContent = 'Error loading raw data: ' + e;
+        rawJsonModal.hidden = false;
+      });
+  }
+
+  closeModal && closeModal.addEventListener('click', ()=> {
+    rawJsonModal.hidden = true;
+  });
+
+  // Close modal on background click
+  rawJsonModal && rawJsonModal.addEventListener('click', (e)=> {
+    if(e.target === rawJsonModal){
+      rawJsonModal.hidden = true;
+    }
+  });
 
   function setStatus(ok){ statusDot.className = ok ? 'status online' : 'status offline'; }
   (async ()=>{ try { const r = await fetch('/list_raw'); setStatus(r.ok); } catch(e){ setStatus(false); } })();

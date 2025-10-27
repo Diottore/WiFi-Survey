@@ -123,10 +123,30 @@
             <small class="muted">Últimas mediciones</small>
           </div>
 
+          <!-- Search and auto-scroll controls -->
+          <div class="results-controls">
+            <input id="searchResults" type="text" placeholder="Buscar por punto, dispositivo o SSID..." autocomplete="off">
+            <label style="display:inline-flex;align-items:center;gap:8px;margin-top:8px">
+              <input id="autoScrollToggle" type="checkbox" checked /> <span class="muted">Auto-scroll a nuevos resultados</span>
+            </label>
+          </div>
+
           <div id="resultsList" class="results-list" role="list" aria-live="polite"></div>
 
           <div class="charts-row">
             <div class="chart-card">
+              <!-- Dataset visibility toggles -->
+              <div class="chart-controls">
+                <label style="display:inline-flex;align-items:center;gap:6px;margin-right:12px">
+                  <input id="toggleDL" type="checkbox" checked /> <span class="muted">DL</span>
+                </label>
+                <label style="display:inline-flex;align-items:center;gap:6px;margin-right:12px">
+                  <input id="toggleUL" type="checkbox" checked /> <span class="muted">UL</span>
+                </label>
+                <label style="display:inline-flex;align-items:center;gap:6px">
+                  <input id="togglePing" type="checkbox" checked /> <span class="muted">Ping</span>
+                </label>
+              </div>
               <canvas id="throughputChart" aria-label="Gráfico de throughput"></canvas>
             </div>
             <div class="summary-card">
@@ -157,6 +177,19 @@
         <button id="btn-go-to-results" class="btn small">Ir a Resultados</button>
       </div>
     </nav>
+
+    <!-- Modal for raw JSON -->
+    <div id="rawJsonModal" class="modal" hidden>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Raw JSON Data</h3>
+          <button id="closeModal" class="btn small">×</button>
+        </div>
+        <div class="modal-body">
+          <pre id="rawJsonContent"></pre>
+        </div>
+      </div>
+    </div>
 
   </div>
 </body>
