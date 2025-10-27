@@ -25,6 +25,13 @@ test:  ## Run syntax checks and unit tests
 	python3 -m unittest test_validation -v
 	@echo ""
 	@echo "✓ All tests passed"
+	@echo ""
+	@echo "Note: Integration tests require Flask to be installed."
+	@echo "Run 'make test-integration' after 'make install' to run integration tests."
+
+test-integration:  ## Run integration tests (requires Flask)
+	@echo "Running integration tests..."
+	python3 -m unittest test_api_integration -v || (echo "⚠️  Flask not installed. Run 'make install' first." && exit 1)
 
 lint:  ## Run linters
 	@echo "Running flake8..."
