@@ -12,10 +12,28 @@
   function setMode(mode, persist = true) {
     const map = { quick: panelQuick, survey: panelSurvey, results: panelResults };
     Object.entries(map).forEach(([k,v]) => v && v.classList.toggle('hidden', k !== mode));
-    [modeQuickBtn, modeSurveyBtn, modeResultsBtn].forEach(b => b && b.classList.remove('active'));
-    if (mode === 'quick' && modeQuickBtn) modeQuickBtn.classList.add('active');
-    if (mode === 'survey' && modeSurveyBtn) modeSurveyBtn.classList.add('active');
-    if (mode === 'results' && modeResultsBtn) modeResultsBtn.classList.add('active');
+    
+    // Update tab button states and ARIA attributes
+    [modeQuickBtn, modeSurveyBtn, modeResultsBtn].forEach(b => {
+      if (b) {
+        b.classList.remove('active');
+        b.setAttribute('aria-selected', 'false');
+      }
+    });
+    
+    if (mode === 'quick' && modeQuickBtn) {
+      modeQuickBtn.classList.add('active');
+      modeQuickBtn.setAttribute('aria-selected', 'true');
+    }
+    if (mode === 'survey' && modeSurveyBtn) {
+      modeSurveyBtn.classList.add('active');
+      modeSurveyBtn.setAttribute('aria-selected', 'true');
+    }
+    if (mode === 'results' && modeResultsBtn) {
+      modeResultsBtn.classList.add('active');
+      modeResultsBtn.setAttribute('aria-selected', 'true');
+    }
+    
     if (persist) try { localStorage.setItem('uiMode', mode); } catch(e){}
     if (mode === 'results') {
       ensureResultsChart();
@@ -362,8 +380,12 @@
     instPing95El && (instPing95El.textContent = p95!=null ? `${p95.toFixed(2)} ms` : '—');
     instLossEl && (instLossEl.textContent = loss!=null ? `${loss.toFixed(2)} %` : '—');
 
-    // Progreso y tiempo restante
-    runProgressFill && (runProgressFill.style.width = `${progress}%`);
+    // Progreso y tiempo restante - Update ARIA
+    if(runProgressFill) {
+      runProgressFill.style.width = `${progress}%`;
+      const progressBar = runProgressFill.parentElement;
+      if(progressBar) progressBar.setAttribute('aria-valuenow', Math.round(progress));
+    }
     progressPct && (progressPct.textContent = `${progress}%`);
     updateRemaining(elapsed, partial);
     liveSummary && (liveSummary.textContent = `Ejecutando... ${progress}%`);
