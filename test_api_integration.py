@@ -6,17 +6,30 @@ Tests the Flask routes with various input scenarios.
 
 import unittest
 import json
-from app import app
+
+try:
+    from app import app
+    FLASK_AVAILABLE = True
+except ImportError:
+    FLASK_AVAILABLE = False
+    app = None
 
 
-class TestRunPointEndpoint(unittest.TestCase):
-    """Test /run_point endpoint validation."""
+# Base test class with common setup
+class BaseAPITest(unittest.TestCase):
+    """Base test class with common setUp method."""
     
     def setUp(self):
         """Set up test client."""
+        if not FLASK_AVAILABLE:
+            self.skipTest("Flask not available - run 'make install' first")
         self.app = app
         self.app.config['TESTING'] = True
         self.client = self.app.test_client()
+
+
+class TestRunPointEndpoint(BaseAPITest):
+    """Test /run_point endpoint validation."""
     
     def test_run_point_valid_request(self):
         """Test with valid run_point request."""
@@ -128,14 +141,8 @@ class TestRunPointEndpoint(unittest.TestCase):
         self.assertEqual(data.get('field'), 'parallel')
 
 
-class TestStartSurveyEndpoint(unittest.TestCase):
+class TestStartSurveyEndpoint(BaseAPITest):
     """Test /start_survey endpoint validation."""
-    
-    def setUp(self):
-        """Set up test client."""
-        self.app = app
-        self.app.config['TESTING'] = True
-        self.client = self.app.test_client()
     
     def test_start_survey_valid_request(self):
         """Test with valid start_survey request."""
@@ -243,14 +250,8 @@ class TestStartSurveyEndpoint(unittest.TestCase):
         self.assertEqual(data.get('field'), 'points')
 
 
-class TestHealthEndpoint(unittest.TestCase):
+class TestHealthEndpoint(BaseAPITest):
     """Test /_health endpoint."""
-    
-    def setUp(self):
-        """Set up test client."""
-        self.app = app
-        self.app.config['TESTING'] = True
-        self.client = self.app.test_client()
     
     def test_health_check(self):
         """Test health check endpoint."""
@@ -263,14 +264,8 @@ class TestHealthEndpoint(unittest.TestCase):
         self.assertIn('timestamp', data)
 
 
-class TestConfigEndpoint(unittest.TestCase):
+class TestConfigEndpoint(BaseAPITest):
     """Test /_survey_config endpoint."""
-    
-    def setUp(self):
-        """Set up test client."""
-        self.app = app
-        self.app.config['TESTING'] = True
-        self.client = self.app.test_client()
     
     def test_survey_config(self):
         """Test survey config endpoint."""
