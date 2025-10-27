@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # app.py - Flask web UI mejorada para encuesta WiFi en Termux
-# Soporta: run_point como tarea background, start_survey (encuesta multi-punto),
-# SSE stream /stream/<task_id>, y endpoints para manejar tareas.
+# Añadido: ejecución de pruebas en background y SSE para updates parciales
+# Mejora: métricas de ping adicionales (p50, p95, pérdida %) en parciales y resultado final.
 
 import os
 import csv
@@ -19,11 +19,11 @@ APP_DIR = os.path.abspath(os.path.dirname(__file__))
 RAW_DIR = os.path.join(APP_DIR, "raw_results")
 CSV_FILE = os.path.join(APP_DIR, "wifi_survey_results.csv")
 
-# --- CONFIGURACIÓN: ajusta según tu servidor IP/tiempos ---
+# --- CONFIGURACIÓN ---
 SERVER_IP = "192.168.1.10"
 IPERF_DURATION = 20
 IPERF_PARALLEL = 4
-# --------------------------------------------------------
+# ---------------------
 
 os.makedirs(RAW_DIR, exist_ok=True)
 
@@ -36,11 +36,9 @@ if not os.path.exists(CSV_FILE):
         writer = csv.writer(f)
         writer.writerow(CSV_HEADER)
 
-# Task manager for background surveys and runs
 tasks = {}
 tasks_lock = threading.Lock()
 
-# Helper to run shell commands
 def run_cmd(cmd, timeout=300):
     try:
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
@@ -50,7 +48,6 @@ def run_cmd(cmd, timeout=300):
     except Exception as e:
         return "", str(e), -1
 
-# Parse ping time from a ping line
 def parse_ping_times_from_output_line(line):
     m = re.search(r'time=([\d\.]+)', line)
     if m:
@@ -60,27 +57,42 @@ def parse_ping_times_from_output_line(line):
             return None
     return None
 
+def _percentile(values, p):
+    if not values:
+        return None
+    arr = sorted(values)
+    k = (len(arr)-1) * (p/100.0)
+    f = int(k)
+    c = min(f+1, len(arr)-1)
+    if f == c:
+        return arr[int(k)]
+    d0 = arr[f] * (c-k)
+    d1 = arr[c] * (k-f)
+    return d0 + d1
+
 def worker_run_point(task_id, device, point, run_index, duration, parallel):
-    """
-    Worker that performs ping + iperf3 (DL then UL)
-    Writes partial updates to tasks[task_id]["partial"] and final result to tasks[task_id]["result"]
-    """
     with tasks_lock:
+        tasks[task_id] = tasks.get(task_id, {})
         tasks[task_id]["status"] = "running"
-        tasks[task_id]["partial"] = {"dl_mbps": 0.0, "ul_mbps": 0.0, "ping_avg_ms": None, "ping_jitter_ms": None, "progress_pct": 0, "elapsed_s": 0}
+        tasks[task_id]["partial"] = {
+            "dl_mbps": 0.0, "ul_mbps": 0.0,
+            "ping_avg_ms": None, "ping_jitter_ms": None,
+            "ping_p50_ms": None, "ping_p95_ms": None, "ping_loss_pct": None,
+            "progress_pct": 0, "elapsed_s": 0
+        }
         tasks[task_id]["seq"] = tasks[task_id].get("seq", 0) + 1
-        tasks[task_id]["logs"].append(f"Task {task_id} started: {point} run:{run_index}")
+        tasks[task_id].setdefault("logs", []).append(f"Task {task_id} started: {point} run:{run_index}")
 
     start_ts = time.time()
 
-    # Best-effort wifi info (termux)
     wifi_out, wifi_err, code = run_cmd("termux-wifi-connectioninfo")
     try:
         wifi_json = json.loads(wifi_out) if wifi_out else {}
     except:
         wifi_json = {}
 
-    # partial updater
+    expected_pings = max(1, int(duration))  # para pérdida %
+
     def update_partial(dl=None, ul=None, ping_vals=None, progress=None, note=None):
         with tasks_lock:
             partial = tasks[task_id].setdefault("partial", {})
@@ -95,8 +107,18 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
                 if len(times) > 1:
                     diffs = [abs(times[i] - times[i-1]) for i in range(1, len(times))]
                     jitter = sum(diffs)/len(diffs)
+                p50 = _percentile(times, 50) if times else None
+                p95 = _percentile(times, 95) if times else None
+                loss = None
+                try:
+                    loss = max(0.0, min(100.0, round((1.0 - (len(times)/expected_pings))*100.0, 2)))
+                except:
+                    loss = None
                 partial["ping_avg_ms"] = avg
                 partial["ping_jitter_ms"] = jitter
+                partial["ping_p50_ms"] = p50
+                partial["ping_p95_ms"] = p95
+                partial["ping_loss_pct"] = loss
             if progress is not None:
                 partial["progress_pct"] = int(progress)
             partial["elapsed_s"] = int(time.time() - start_ts)
@@ -104,11 +126,9 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
             if note:
                 tasks[task_id]["logs"].append(note)
 
-    # Ping worker to collect RTTs (best effort)
     ping_samples = []
     def ping_worker():
         try:
-            # use ping -c duration to sample roughly once per second
             p = subprocess.Popen(["ping", "-c", str(int(duration)), SERVER_IP], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             for line in p.stdout:
                 line = line.strip()
@@ -124,7 +144,6 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
     ping_thread = threading.Thread(target=ping_worker, daemon=True)
     ping_thread.start()
 
-    # DL iperf3 (client)
     dl_mbps_final = 0.0
     try:
         cmd_dl = f"iperf3 -c {SERVER_IP} -t {int(duration)} -P {int(parallel)}"
@@ -142,7 +161,6 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
                 with tasks_lock:
                     tasks[task_id]["logs"].append(line if len(line) < 1000 else line[:1000])
         p.wait()
-        # quick final sample with json (1s) to get final value if possible
         dl_out, dl_err, code = run_cmd(f"iperf3 -c {SERVER_IP} -t 1 -P {int(parallel)} --json", timeout=10)
         try:
             j = json.loads(dl_out) if dl_out else {}
@@ -156,7 +174,6 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
         with tasks_lock:
             tasks[task_id]["logs"].append(f"iperf3 DL error: {e}")
 
-    # UL iperf3 (reverse)
     ul_mbps_final = 0.0
     try:
         cmd_ul = f"iperf3 -c {SERVER_IP} -t {int(duration)} -P {int(parallel)} -R"
@@ -187,11 +204,19 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
         with tasks_lock:
             tasks[task_id]["logs"].append(f"iperf3 UL error: {e}")
 
-    # join ping thread
     try:
         ping_thread.join(timeout=2)
     except:
         pass
+
+    # Calcular métricas finales de ping (en caso de que no hayan quedado actualizadas)
+    with tasks_lock:
+        partial_ping = tasks[task_id].get("partial", {})
+        ping_avg_ms = partial_ping.get("ping_avg_ms")
+        ping_jitter_ms = partial_ping.get("ping_jitter_ms")
+        ping_p50_ms = partial_ping.get("ping_p50_ms")
+        ping_p95_ms = partial_ping.get("ping_p95_ms")
+        ping_loss_pct = partial_ping.get("ping_loss_pct")
 
     timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     final = {
@@ -205,8 +230,11 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
         "link_speed": wifi_json.get("linkSpeed",""),
         "iperf_dl_mbps": dl_mbps_final,
         "iperf_ul_mbps": ul_mbps_final,
-        "ping_avg_ms": tasks[task_id].get("partial", {}).get("ping_avg_ms"),
-        "ping_jitter_ms": tasks[task_id].get("partial", {}).get("ping_jitter_ms"),
+        "ping_avg_ms": ping_avg_ms,
+        "ping_jitter_ms": ping_jitter_ms,
+        "ping_p50_ms": ping_p50_ms,
+        "ping_p95_ms": ping_p95_ms,
+        "ping_loss_pct": ping_loss_pct,
         "duration_s": duration
     }
 
@@ -218,16 +246,14 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
         with tasks_lock:
             tasks[task_id]["logs"].append(f"Error saving raw: {e}")
 
-    # Append to CSV
     try:
         with open(CSV_FILE, "a", newline='') as f:
             writer = csv.writer(f)
-            writer.writerow([device, point, timestamp, final["ssid"], final["bssid"], final["frequency"], final["rssi"], final["link_speed"], final["iperf_dl_mbps"], final["iperf_ul_mbps"], final["ping_avg_ms"], final["ping_jitter_ms"], "", duration, f"run:{run_index}"])
+            writer.writerow([device, point, timestamp, final["ssid"], final["bssid"], final["frequency"], final["rssi"], final["link_speed"], final["iperf_dl_mbps"], final["iperf_ul_mbps"], final["ping_avg_ms"], final["ping_jitter_ms"], final["ping_loss_pct"], duration, f"run:{run_index}"])
     except Exception as e:
         with tasks_lock:
             tasks[task_id]["logs"].append(f"CSV write error: {e}")
 
-    # Finalize
     with tasks_lock:
         tasks[task_id]["status"] = "finished"
         tasks[task_id]["result"] = final
@@ -256,7 +282,6 @@ def run_point():
     t.start()
     return jsonify({"ok": True, "task_id": task_id})
 
-# start_survey: creates a parent task that runs worker_run_point for each point (child tasks)
 @app.route("/start_survey", methods=["POST"])
 def start_survey():
     payload = request.json or {}
@@ -277,7 +302,6 @@ def start_survey():
         with tasks_lock:
             tasks[p_id]["status"] = "running"
             tasks[p_id]["logs"].append(f"Survey started: {points} repeats:{repeats} manual:{manual}")
-        run_idx = 0
         for rep in range(repeats):
             for pt in points:
                 with tasks_lock:
@@ -286,13 +310,11 @@ def start_survey():
                         tasks[p_id]["logs"].append("Survey cancelled")
                         tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
                         return
-                run_idx += 1
                 if manual:
                     with tasks_lock:
                         tasks[p_id]["waiting"] = True
                         tasks[p_id]["logs"].append(f"Waiting at point {pt}")
                         tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
-                    # wait until proceed or cancel
                     while True:
                         time.sleep(0.5)
                         with tasks_lock:
@@ -306,13 +328,10 @@ def start_survey():
                                 tasks[p_id]["waiting"] = False
                                 tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
                                 break
-                # child task
                 child_id = str(uuid.uuid4())
                 with tasks_lock:
                     tasks[child_id] = {"status":"queued", "total":1, "done":0, "logs":[], "results": [], "partial": {}, "seq": 0}
-                # run measurement synchronously (this runs in survey_worker thread)
                 worker_run_point(child_id, device, pt, rep+1, IPERF_DURATION, IPERF_PARALLEL)
-                # collect child result
                 with tasks_lock:
                     child_result = tasks[child_id].get("result")
                     if child_result:
@@ -371,16 +390,10 @@ def stream_task(task_id):
                 if seq != last_seq:
                     last_seq = seq
                     data = {"status": t.get("status"), "partial": t.get("partial"), "logs": t.get("logs")[-20:], "done": t.get("done"), "total": t.get("total"), "results": t.get("results", [])}
-                    try:
-                        yield f"event: update\ndata: {json.dumps(data)}\n\n"
-                    except Exception:
-                        yield f"event: update\ndata: {{}}\n\n"
+                    yield f"event: update\ndata: {json.dumps(data)}\n\n"
                 if t.get("status") in ("finished","error","cancelled"):
-                    try:
-                        payload = t.get("result") if t.get("result") else t.get("results", [])
-                        yield f"event: finished\ndata: {json.dumps(payload)}\n\n"
-                    except Exception:
-                        yield f"event: finished\ndata: {{}}\n\n"
+                    payload = t.get("result") if t.get("result") else t.get("results", [])
+                    yield f"event: finished\ndata: {json.dumps(payload)}\n\n"
                     break
             time.sleep(0.8)
     return Response(event_stream(), mimetype="text/event-stream")
