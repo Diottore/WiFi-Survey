@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>WiFi Survey — Panel</title>
+  <link rel="stylesheet" href="/static/css/styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>WiFi Survey</h1>
+    <div class="controls">
+      <input id="filter-ssid" placeholder="Filtrar SSID..." />
+      <select id="filter-security">
+        <option value="">Todas las seguridades</option>
+        <option value="WPA2">WPA2</option>
+        <option value="WPA3">WPA3</option>
+        <option value="Open">Open</option>
+      </select>
+      <button id="btn-export">Exportar CSV</button>
+      <button id="btn-clear-local">Limpiar cache local</button>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <section class="stats" id="stats">
+      <div class="stat-item"><strong id="total-count">0</strong><span>Total registros</span></div>
+      <div class="stat-item"><strong id="unique-ssids">0</strong><span>SSIDs únicos</span></div>
+      <div class="stat-item"><strong id="avg-rssi">—</strong><span>RSSI medio</span></div>
+    </section>
+
+    <section class="results">
+      <div id="results-container" class="results-container">
+        <table id="results-table" class="results-table" aria-live="polite">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>SSID</th>
+              <th>BSSID</th>
+              <th>RSSI (dBm)</th>
+              <th>SNR (dB)</th>
+              <th>Canal</th>
+              <th>Freq (MHz)</th>
+              <th>Seguridad</th>
+              <th>Device</th>
+            </tr>
+          </thead>
+          <tbody id="results-body"></tbody>
+        </table>
+      </div>
+      <div id="loader" class="loader hidden">Procesando...</div>
+    </section>
+  </main>
+
+  <script src="/static/js/app.js" type="module"></script>
+</body>
+</html>
