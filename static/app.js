@@ -1,37 +1,30 @@
-// static/app.js - Tabs (Pruebas / Resultados) + lógica previa (chart líneas)
-// Añadida interacción para modo manual: botón "Continuar" cuando la tarea está en estado waiting.
-// Se incluyen nuevas funcionalidades como búsqueda en tiempo real, auto-scroll y exportación avanzada.
+// static/app.js - Interfaz mejorada con organización más clara y funcionalidad optimizada.
+// Incluye tabs, gráficos, búsquedas, y controles dinámicos con mejoras en la interacción visual.
 
 (() => {
   const $ = id => document.getElementById(id);
 
-  // Tabs
+  // Manejo de Tabs para organizar la interfaz
   const tabs = Array.from(document.querySelectorAll('.tab'));
   function showPanel(panelId) {
-    const panels = document.querySelectorAll('.panel');
-    panels.forEach(p => p.id === panelId ? p.classList.remove('hidden') : p.classList.add('hidden'));
+    // Mostrar solo el panel seleccionado
+    document.querySelectorAll('.panel').forEach(p => {
+      p.id === panelId ? p.classList.remove('hidden') : p.classList.add('hidden');
+    });
+
+    // Actualizar el estado visual de las tabs
     tabs.forEach(t => {
       const target = t.getAttribute('data-target');
-      if (target === panelId) {
-        t.classList.add('active');
-        t.setAttribute('aria-selected', 'true');
-      } else {
-        t.classList.remove('active');
-        t.setAttribute('aria-selected', 'false');
-      }
+      t.classList.toggle('active', target === panelId);
+      t.setAttribute('aria-selected', target === panelId);
     });
-    const fab = $('fabRun');
-    if (panelId === 'panel-tests') fab && (fab.style.display = 'inline-flex');
-    else fab && (fab.style.display = 'none');
+
+    // Mostrar el botón flotante solo en el panel de pruebas
+    $('fabRun').style.display = panelId === 'panel-tests' ? 'inline-flex' : 'none';
   }
-  tabs.forEach(t => t.addEventListener('click', e => { showPanel(t.getAttribute('data-target')); }));
+  tabs.forEach(t => t.addEventListener('click', () => showPanel(t.getAttribute('data-target'))));
 
-  const btnGoTests = $('btn-go-to-tests'), btnGoResults = $('btn-go-to-results');
-  btnGoTests && btnGoTests.addEventListener('click', () => showPanel('panel-tests'));
-  btnGoResults && btnGoResults.addEventListener('click', () => showPanel('panel-results'));
-  showPanel('panel-tests');
-
-  // Elements
+  // Elementos de controles y la interfaz
   const deviceEl = $('device'), pointEl = $('point'), runEl = $('run'), runBtn = $('runBtn');
   const downloadBtn = $('downloadBtn'), pointsEl = $('points'), repeatsEl = $('repeats');
   const startSurveyBtn = $('startSurvey'), cancelTaskBtn = $('cancelTask');
@@ -43,17 +36,13 @@
   const manualCheckbox = $('manual_confirm'), proceedBtn = $('proceedBtn');
   const toggleDL = $('toggleDL'), toggleUL = $('toggleUL'), togglePing = $('togglePing');
   const searchInput = $('searchInput'), autoscrollToggle = $('autoscrollToggle');
-  const rawModal = $('rawModal'), rawContent = $('rawContent'), closeModal = $('closeModal');
 
-  // Buffers and state
-  let resultBuffer = [];
-  let flushing = false;
+  // Variables y estado
   let results = [];
-  let currentTaskId = null;
   let filteredResults = [];
-  let searchQuery = '';
+  let currentTaskId = null;
 
-  // Chart
+  // Configuración del gráfico
   const ctx = document.getElementById('throughputChart').getContext('2d');
   const chart = new Chart(ctx, {
     type: 'line',
@@ -77,86 +66,62 @@
     }
   });
 
-  // Resize chart on window changes
-  function debounce(fn, ms=150) {
-    let timeout;
-    return function(...args) {
-      clearTimeout(timeout);
-      timeout = setTimeout(() => fn(...args), ms);
-    };
+  // Función para actualizar el resumen
+  function updateSummary() {
+    const avg = arr => arr.length ? (arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2) : '—';
+    avgRssi.textContent = avg(results.map(r => r.rssi));
+    avgDl.textContent = avg(results.map(r => r.iperf_dl_mbps));
+    avgUl.textContent = avg(results.map(r => r.iperf_ul_mbps));
+    avgPing.textContent = avg(results.map(r => r.ping_avg));
+    avgJitter.textContent = avg(results.map(r => r.ping_jitter));
   }
 
-  const resizeObserver = new ResizeObserver(debounce(() => {
-    chart.resize();
-  }, 200));
-  resizeObserver.observe(document.querySelector('.chart-card'));
-
-  // Filter and search results
-  searchInput.addEventListener('input', () => {
-    const query = searchInput.value.toLowerCase();
-    filteredResults = results.filter(
-      r => r.point.toLowerCase().includes(query) || r.ssid.toLowerCase().includes(query)
-    );
-    renderResults();
-  });
-
-  // Auto-scroll toggle
-  autoscrollToggle.addEventListener('change', () => {
-    if (autoscrollToggle.checked) {
-      resultsList.scrollTop = resultsList.scrollHeight;
-    }
-  });
-
-  // Push results to buffer
-  function pushResult(newResult) {
-    resultBuffer.push(newResult);
-    if (!flushing) {
-      flushing = true;
-      requestAnimationFrame(flushResults);
-    }
-  }
-
-  // Flush results and render
-  function flushResults() {
-    while (resultBuffer.length > 0) {
-      const result = resultBuffer.shift();
-      results.push(result);
-    }
-    renderResults();
-    flushing = false;
-  }
-
-  // Render results into the results list
+  // Función para renderizar los resultados
   function renderResults() {
     resultsList.innerHTML = '';
     filteredResults.forEach(result => {
-      const listItem = document.createElement('div');
-      listItem.className = 'result-item';
-      listItem.innerHTML = `
-        <span>${result.point}</span>
-        <span>${result.ssid}</span>
-        <span>${result.rssi}</span>
-        <span>${result.iperf_dl_mbps}</span>
+      const div = document.createElement('div');
+      div.className = 'result-item';
+      div.innerHTML = `
+        <div class="result-point">${result.point}</div>
+        <div class="result-dl">${result.iperf_dl_mbps} Mbps</div>
+        <div class="result-ul">${result.iperf_ul_mbps} Mbps</div>
+        <div class="result-ping">${result.ping_avg} ms</div>
       `;
-      resultsList.appendChild(listItem);
+      resultsList.appendChild(div);
     });
   }
 
-  // Start survey logic
-  startSurveyBtn.addEventListener('click', () => {
+  // Buscar en resultados
+  searchInput.addEventListener('input', () => {
+    const query = searchInput.value.toLowerCase();
+    filteredResults = results.filter(r => r.point.toLowerCase().includes(query) || r.ssid.toLowerCase().includes(query));
+    renderResults();
+  });
+
+  // Botón de ejecutar prueba
+  runBtn.addEventListener('click', async () => {
+    const point = pointEl.value;
+    const device = deviceEl.value;
+    console.log(`Running test for ${point} on device ${device}`);
+    // Aquí se implementaría la lógica para ejecutar la prueba
+  });
+
+  // Botón de iniciar encuesta
+  startSurveyBtn.addEventListener('click', async () => {
     console.log('Starting survey...');
-    // Add survey logic here
+    // Aquí se implementaría la lógica para iniciar encuestas
   });
 
-  // Cancel survey logic
+  // Botón de cancelar tarea
   cancelTaskBtn.addEventListener('click', () => {
-    console.log('Cancelling survey...');
-    // Add cancel logic here
+    console.log('Cancelling task...');
+    // Aquí se implementaría la lógica para cancelar la tarea
   });
 
-  // Export JSON functionality
+  // Exportar resultados como JSON
   exportJsonBtn.addEventListener('click', () => {
-    const blob = new Blob([JSON.stringify(results)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(results, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -165,17 +130,18 @@
     URL.revokeObjectURL(url);
   });
 
-  // Clear results
+  // Limpiar resultados
   clearResultsBtn.addEventListener('click', () => {
     results = [];
     filteredResults = [];
-    resultsList.innerHTML = '';
+    renderResults();
     chart.data.labels = [];
-    chart.data.datasets.forEach(dataset => (dataset.data = []));
+    chart.data.datasets.forEach(dataset => dataset.data = []);
     chart.update();
+    updateSummary();
   });
 
-  // Initialize state
+  // Inicializar la vista
   function initialize() {
     showPanel('panel-tests');
     filteredResults = results;
