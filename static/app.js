@@ -129,11 +129,23 @@
     filteredResults.forEach(r => {
       const card = document.createElement('div');
       card.className = 'result-card';
+      // Sanitize raw_file to extract only the filename
+      const rawFileName = (r.raw_file||'').split('/').pop().replace(/[^a-zA-Z0-9._-]/g, '');
+      // Escape HTML in user-provided fields
+      const escapeHtml = (str) => {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+      };
+      const safePoint = escapeHtml(r.point || '');
+      const safeSsid = escapeHtml(r.ssid || '');
+      const safeBssid = r.bssid ? (' · ' + escapeHtml(r.bssid)) : '';
+      
       card.innerHTML = `
         <div class="result-left" role="listitem" style="min-width:0">
           <div style="max-width:60vw;overflow-wrap:break-word">
-            <div class="title">${r.point}</div>
-            <div class="muted">${r.ssid}${r.bssid?(' · '+r.bssid):''}</div>
+            <div class="title">${safePoint}</div>
+            <div class="muted">${safeSsid}${safeBssid}</div>
           </div>
         </div>
         <div class="result-stats">
@@ -142,7 +154,7 @@
           <div class="muted" style="font-size:.85rem">UL ${r.iperf_ul_mbps ?? '—'} Mbps</div>
           <div style="margin-top:6px"><span class="muted">Ping: </span><strong>${r.ping_avg ?? '—'}</strong> ms</div>
           <div style="margin-top:2px"><span class="muted">Jitter: </span><strong>${r.ping_jitter ?? '—'}</strong> ms</div>
-          <div style="margin-top:6px"><a href="#" class="muted raw-link" data-file="${(r.raw_file||'').split('/').pop()}">raw</a></div>
+          <div style="margin-top:6px"><a href="#" class="muted raw-link" data-file="${rawFileName}">raw</a></div>
         </div>
       `;
       frag.appendChild(card);
@@ -154,9 +166,19 @@
       link.addEventListener('click', async (e) => {
         e.preventDefault();
         const file = e.target.getAttribute('data-file');
-        if(!file) return;
+        // Validate filename: only alphanumeric, dots, dashes, and underscores
+        if(!file || !/^[a-zA-Z0-9._-]+$/.test(file)) {
+          rawContent.textContent = 'Error: Invalid filename';
+          rawModal.hidden = false;
+          return;
+        }
         try {
-          const res = await fetch(`/raw/${file}`);
+          const res = await fetch(`/raw/${encodeURIComponent(file)}`);
+          if(!res.ok) {
+            rawContent.textContent = `Error: Server returned ${res.status} ${res.statusText}`;
+            rawModal.hidden = false;
+            return;
+          }
           const json = await res.json();
           rawContent.textContent = JSON.stringify(json, null, 2);
           rawModal.hidden = false;
