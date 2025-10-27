@@ -6,6 +6,8 @@
 
 > Herramienta profesional para realizar mediciones y mapeo de cobertura WiFi desde dispositivos Android usando Termux, con una interfaz web moderna y potente.
 
+**🚀 [Guía de Inicio Rápido](QUICKSTART.md)** | **📚 [Documentación Completa](#-documentación)** | **🤝 [Contribuir](CONTRIBUTING.md)**
+
 ## 📋 Tabla de Contenidos
 
 - [Características](#-características)
@@ -221,9 +223,13 @@ Lanza una encuesta completa con:
 
 ## 📚 Documentación
 
+- **[🚀 Guía de Inicio Rápido](QUICKSTART.md)** - Configura y ejecuta en menos de 10 minutos
 - [Procedimiento de pruebas WiFi](wifi_test_procedure.md) - Guía completa para testing profesional
 - [Procedimiento con un solo dispositivo](mobile_single_device_procedure.md) - Guía específica para mediciones móviles
 - [Guía de contribución](CONTRIBUTING.md) - Cómo contribuir al proyecto
+- [Código de Conducta](CODE_OF_CONDUCT.md) - Normas de la comunidad
+- [Política de Seguridad](SECURITY.md) - Seguridad y reportes de vulnerabilidades
+- [Registro de Cambios](CHANGELOG.md) - Historial de versiones y cambios
 
 ## 🔒 Notas de Seguridad
 
