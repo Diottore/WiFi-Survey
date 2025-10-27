@@ -1,8 +1,45 @@
-// static/app.js v11 — Resultados mobile-first: toolbar sticky sin solapamiento, gráfico responsivo,
+// static/app.js v12 — Enhanced with input validation, better error handling, and improved stability
+// Resultados mobile-first: toolbar sticky sin solapamiento, gráfico responsivo,
 // controles con scroll-x en móvil y leyenda compacta. Live panel con gráfica de estabilidad.
 
 (() => {
+  'use strict';
+  
   const $ = id => document.getElementById(id);
+  
+  // Validation helpers
+  function validatePointName(point) {
+    if (!point || point.length > 100) return false;
+    return /^[a-zA-Z0-9_-]+$/.test(point);
+  }
+  
+  function validateDeviceName(device) {
+    if (!device || device.length > 50) return false;
+    return device.trim().length > 0;
+  }
+  
+  function showError(message, duration = 5000) {
+    console.error(message);
+    // Simple error display - could be enhanced with a toast notification
+    if (liveSummary) {
+      liveSummary.textContent = `Error: ${message}`;
+      liveSummary.style.color = '#ef4444';
+      setTimeout(() => {
+        liveSummary.style.color = '';
+      }, duration);
+    }
+  }
+  
+  function showSuccess(message, duration = 3000) {
+    console.log(message);
+    if (liveSummary) {
+      liveSummary.textContent = message;
+      liveSummary.style.color = '#10b981';
+      setTimeout(() => {
+        liveSummary.style.color = '';
+      }, duration);
+    }
+  }
 
   // Panels / Mode
   const panelQuick = $('panel-quick'), panelSurvey = $('panel-survey'), panelResults = $('panel-results');
@@ -64,51 +101,71 @@
   let liveSamples = []; // {t, dl, ul, ping}
 
   function ensureLiveMiniChart(){
-    const canvas = $('liveMiniChart'); if(!canvas) return;
+    const canvas = $('liveMiniChart'); 
+    if(!canvas) {
+      console.warn('liveMiniChart canvas not found');
+      return;
+    }
     if(liveMiniChart) return;
-    const ctx = canvas.getContext('2d');
-    liveMiniChart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: [],
-        datasets: [
-          { label:'DL', data: [], borderColor:'#0b74ff', backgroundColor:'rgba(11,116,255,0.10)', yAxisID:'y', tension:0.25, pointRadius:0, fill:true },
-          { label:'UL', data: [], borderColor:'#06b6d4', backgroundColor:'rgba(6,182,212,0.08)', yAxisID:'y', tension:0.25, pointRadius:0, fill:true },
-          { label:'Ping', data: [], borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,0.06)', yAxisID:'y1', tension:0.15, pointRadius:0, fill:false, borderDash:[4,2] }
-        ]
-      },
-      options: {
-        responsive:true, maintainAspectRatio:false, animation:{ duration: 0 },
-        interaction:{ intersect:false, mode:'index' },
-        plugins:{ legend:{ display:true, position: (matchMedia('(max-width:680px)').matches ? 'bottom' : 'top'),
-          labels:{ boxWidth: 10, font:{ size: matchMedia('(max-width:680px)').matches ? 11 : 12 } } },
-          tooltip:{ callbacks:{ title:(items)=> items?.[0]?.label ? `t=${items[0].label}s` : '',
-          label:(it)=> `${it.dataset.label}: ${Number(it.parsed.y).toFixed(2)}` }}},
-        scales: {
-          x: { title:{display:true, text:'s'}, ticks:{ autoSkip:true, maxRotation:0, font:{ size: matchMedia('(max-width:680px)').matches ? 10 : 12 } } },
-          y: { title:{display:true, text:'Mbps'}, beginAtZero:true, ticks:{ font:{ size: matchMedia('(max-width:680px)').matches ? 10 : 12 } } },
-          y1:{ position:'right', title:{display:true, text:'ms'}, grid:{drawOnChartArea:false}, beginAtZero:true, ticks:{ font:{ size: matchMedia('(max-width:680px)').matches ? 10 : 12 } } }
+    
+    try {
+      const ctx = canvas.getContext('2d');
+      liveMiniChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [
+            { label:'DL', data: [], borderColor:'#0b74ff', backgroundColor:'rgba(11,116,255,0.10)', yAxisID:'y', tension:0.25, pointRadius:0, fill:true },
+            { label:'UL', data: [], borderColor:'#06b6d4', backgroundColor:'rgba(6,182,212,0.08)', yAxisID:'y', tension:0.25, pointRadius:0, fill:true },
+            { label:'Ping', data: [], borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,0.06)', yAxisID:'y1', tension:0.15, pointRadius:0, fill:false, borderDash:[4,2] }
+          ]
+        },
+        options: {
+          responsive:true, maintainAspectRatio:false, animation:{ duration: 0 },
+          interaction:{ intersect:false, mode:'index' },
+          plugins:{ legend:{ display:true, position: (matchMedia('(max-width:680px)').matches ? 'bottom' : 'top'),
+            labels:{ boxWidth: 10, font:{ size: matchMedia('(max-width:680px)').matches ? 11 : 12 } } },
+            tooltip:{ callbacks:{ title:(items)=> items?.[0]?.label ? `t=${items[0].label}s` : '',
+            label:(it)=> `${it.dataset.label}: ${Number(it.parsed.y).toFixed(2)}` }}},
+          scales: {
+            x: { title:{display:true, text:'s'}, ticks:{ autoSkip:true, maxRotation:0, font:{ size: matchMedia('(max-width:680px)').matches ? 10 : 12 } } },
+            y: { title:{display:true, text:'Mbps'}, beginAtZero:true, ticks:{ font:{ size: matchMedia('(max-width:680px)').matches ? 10 : 12 } } },
+            y1:{ position:'right', title:{display:true, text:'ms'}, grid:{drawOnChartArea:false}, beginAtZero:true, ticks:{ font:{ size: matchMedia('(max-width:680px)').matches ? 10 : 12 } } }
+          }
         }
-      }
-    });
+      });
+    } catch(e) {
+      console.error('Error creating live mini chart:', e);
+      showError('Error al crear el gráfico en vivo');
+    }
   }
+  
   function liveChartPush(t, dl, ul, ping){
-    ensureLiveMiniChart();
-    if(!liveMiniChart) return;
-    liveSamples.push({t, dl, ul, ping});
-    if(liveSamples.length > 600) liveSamples.shift(); // ~10 min @1Hz
-    liveMiniChart.data.labels = liveSamples.map(s=>s.t);
-    liveMiniChart.data.datasets[0].data = liveSamples.map(s=>s.dl ?? null);
-    liveMiniChart.data.datasets[1].data = liveSamples.map(s=>s.ul ?? null);
-    liveMiniChart.data.datasets[2].data = liveSamples.map(s=>s.ping ?? null);
-    liveMiniChart.update('none');
-  }
-  function liveChartReset(){
-    liveSamples = [];
-    if(liveMiniChart){
-      liveMiniChart.data.labels = [];
-      liveMiniChart.data.datasets.forEach(ds=>ds.data=[]);
+    try {
+      ensureLiveMiniChart();
+      if(!liveMiniChart) return;
+      liveSamples.push({t, dl, ul, ping});
+      if(liveSamples.length > 600) liveSamples.shift(); // ~10 min @1Hz
+      liveMiniChart.data.labels = liveSamples.map(s=>s.t);
+      liveMiniChart.data.datasets[0].data = liveSamples.map(s=>s.dl ?? null);
+      liveMiniChart.data.datasets[1].data = liveSamples.map(s=>s.ul ?? null);
+      liveMiniChart.data.datasets[2].data = liveSamples.map(s=>s.ping ?? null);
       liveMiniChart.update('none');
+    } catch(e) {
+      console.error('Error updating live chart:', e);
+    }
+  }
+  
+  function liveChartReset(){
+    try {
+      liveSamples = [];
+      if(liveMiniChart){
+        liveMiniChart.data.labels = [];
+        liveMiniChart.data.datasets.forEach(ds=>ds.data=[]);
+        liveMiniChart.update('none');
+      }
+    } catch(e) {
+      console.error('Error resetting live chart:', e);
     }
   }
 
@@ -132,38 +189,68 @@
   }
 
   function ensureResultsChart(){
-    const canvas = $('throughputChart'); if(!canvas) return;
-    if(resultsChart) { try { applyResultsChartResponsiveOptions(resultsChart); resultsChart.resize(); } catch{} return; }
-    const ctx = canvas.getContext('2d');
-    resultsChart = new Chart(ctx, {
-      type: 'line',
-      data: { labels: [], datasets: [
-        { label:'DL Mbps', data: [], borderColor:'#0b74ff', backgroundColor:'rgba(11,116,255,0.08)', yAxisID:'y', tension:0.24, pointRadius:3, fill:true },
-        { label:'UL Mbps', data: [], borderColor:'#06b6d4', backgroundColor:'rgba(6,182,212,0.06)', yAxisID:'y', tension:0.24, pointRadius:3, fill:true },
-        { label:'Ping ms', data: [], borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,0.04)', yAxisID:'y1', tension:0.2, pointRadius:2, borderDash:[4,2], fill:false }
-      ]},
-      options: {
-        responsive:true, maintainAspectRatio:false, interaction:{mode:'index', intersect:false}, animation:{duration:250},
-        plugins:{ legend:{ position:'top', labels:{ boxWidth: 12 } } },
-        scales:{ x:{ title:{display:true,text:'Punto'}, ticks:{ autoSkip:true, maxRotation:0 } },
-          y:{ position:'left', title:{display:true,text:'Mbps'}, beginAtZero:true },
-          y1:{ position:'right', title:{display:true,text:'Ping (ms)'}, beginAtZero:true, grid:{drawOnChartArea:false} } }
-      }
-    });
-    applyResultsChartResponsiveOptions(resultsChart);
-
-    // ResizeObserver para que no quede en 0x0
-    const card = $('resultsChartCard');
-    if(card && 'ResizeObserver' in window){
-      chartRO = new ResizeObserver(()=> { try { applyResultsChartResponsiveOptions(resultsChart); resultsChart.resize(); } catch{} });
-      chartRO.observe(card);
+    const canvas = $('throughputChart'); 
+    if(!canvas) {
+      console.warn('throughputChart canvas not found');
+      return;
     }
-    // Escucha cambios de media query para reconfigurar leyenda/ticks
-    matchMedia('(max-width:680px)').addEventListener?.('change', ()=> {
-      try { applyResultsChartResponsiveOptions(resultsChart); resultsChart.update(); } catch{}
-    });
+    if(resultsChart) { 
+      try { 
+        applyResultsChartResponsiveOptions(resultsChart); 
+        resultsChart.resize(); 
+      } catch(e) { 
+        console.error('Error resizing chart:', e); 
+      }
+      return; 
+    }
+    
+    try {
+      const ctx = canvas.getContext('2d');
+      resultsChart = new Chart(ctx, {
+        type: 'line',
+        data: { labels: [], datasets: [
+          { label:'DL Mbps', data: [], borderColor:'#0b74ff', backgroundColor:'rgba(11,116,255,0.08)', yAxisID:'y', tension:0.24, pointRadius:3, fill:true },
+          { label:'UL Mbps', data: [], borderColor:'#06b6d4', backgroundColor:'rgba(6,182,212,0.06)', yAxisID:'y', tension:0.24, pointRadius:3, fill:true },
+          { label:'Ping ms', data: [], borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,0.04)', yAxisID:'y1', tension:0.2, pointRadius:2, borderDash:[4,2], fill:false }
+        ]},
+        options: {
+          responsive:true, maintainAspectRatio:false, interaction:{mode:'index', intersect:false}, animation:{duration:250},
+          plugins:{ legend:{ position:'top', labels:{ boxWidth: 12 } } },
+          scales:{ x:{ title:{display:true,text:'Punto'}, ticks:{ autoSkip:true, maxRotation:0 } },
+            y:{ position:'left', title:{display:true,text:'Mbps'}, beginAtZero:true },
+            y1:{ position:'right', title:{display:true,text:'Ping (ms)'}, beginAtZero:true, grid:{drawOnChartArea:false} } }
+        }
+      });
+      applyResultsChartResponsiveOptions(resultsChart);
 
-    rebuildResultsChart();
+      // ResizeObserver para que no quede en 0x0
+      const card = $('resultsChartCard');
+      if(card && 'ResizeObserver' in window){
+        chartRO = new ResizeObserver(()=> { 
+          try { 
+            applyResultsChartResponsiveOptions(resultsChart); 
+            resultsChart.resize(); 
+          } catch(e) { 
+            console.error('ResizeObserver error:', e); 
+          } 
+        });
+        chartRO.observe(card);
+      }
+      // Escucha cambios de media query para reconfigurar leyenda/ticks
+      matchMedia('(max-width:680px)').addEventListener?.('change', ()=> {
+        try { 
+          applyResultsChartResponsiveOptions(resultsChart); 
+          resultsChart.update(); 
+        } catch(e) {
+          console.error('Media query change error:', e);
+        }
+      });
+
+      rebuildResultsChart();
+    } catch(e) {
+      console.error('Error creating results chart:', e);
+      showError('Error al crear el gráfico de resultados');
+    }
   }
 
   function getFilteredSortedResults(){
@@ -213,22 +300,87 @@
   sortResultsSelect && sortResultsSelect.addEventListener('change', rebuildResultsChart);
   refreshChartBtn && refreshChartBtn.addEventListener('click', rebuildResultsChart);
 
-  // ============ SSE / Polling ============
+  // ============ SSE / Polling with better error handling ============
   function openSseForTask(task_id){
-    if(!task_id) return;
-    if(typeof(EventSource)==='undefined'){ pollTaskStatus(task_id, 1000); return; }
-    if(currentSse) try{ currentSse.close(); }catch{}
-    const es=new EventSource(`/stream/${encodeURIComponent(task_id)}`); currentSse=es;
-    es.addEventListener('error',()=>{ try{es.close();}catch{} pollTaskStatus(task_id,1000); });
-    es.addEventListener('update', ev=>{ try{ handlePartialUpdate(JSON.parse(ev.data)); }catch(e){ console.error(e); } });
-    es.addEventListener('finished', ev=>{ try{ handleFinalResult(JSON.parse(ev.data||'null')); }catch(e){ console.error(e); } try{es.close();}catch{} currentSse=null; });
+    if(!task_id) {
+      console.error('openSseForTask called without task_id');
+      return;
+    }
+    if(typeof(EventSource)==='undefined'){ 
+      console.warn('EventSource not supported, falling back to polling');
+      pollTaskStatus(task_id, 1000); 
+      return; 
+    }
+    if(currentSse) try{ currentSse.close(); }catch(e){ console.warn('Error closing previous SSE:', e); }
+    
+    const es=new EventSource(`/stream/${encodeURIComponent(task_id)}`); 
+    currentSse=es;
+    
+    es.addEventListener('error', (e) => { 
+      console.warn('SSE error, falling back to polling:', e);
+      try { es.close(); } catch(err) { console.warn('Error closing SSE:', err); }
+      pollTaskStatus(task_id, 1000); 
+    });
+    
+    es.addEventListener('update', ev => { 
+      try { 
+        const data = JSON.parse(ev.data);
+        handlePartialUpdate(data); 
+      } catch(e) { 
+        console.error('Error parsing SSE update:', e); 
+      } 
+    });
+    
+    es.addEventListener('finished', ev => { 
+      try { 
+        const data = JSON.parse(ev.data || 'null');
+        handleFinalResult(data); 
+      } catch(e) { 
+        console.error('Error parsing SSE finished:', e); 
+      } 
+      try { es.close(); } catch(err) { console.warn('Error closing SSE:', err); }
+      currentSse = null; 
+    });
+    
     return es;
   }
+  
   let pollIntervalHandle=null;
   function pollTaskStatus(task_id, ms=1200){
     if(pollIntervalHandle) clearInterval(pollIntervalHandle);
+    let errorCount = 0;
+    const maxErrors = 5;
+    
     pollIntervalHandle=setInterval(async()=>{
-      try{ const r=await fetch(`/task_status/${task_id}`); if(!r.ok) return; const js=await r.json(); if(js.partial) handlePartialUpdate(js); if(js.status==='finished'){ handleFinalResult(js.result||js.results||{}); clearInterval(pollIntervalHandle); pollIntervalHandle=null; } }catch(e){ console.warn('poll error',e); }
+      try { 
+        const r=await fetch(`/task_status/${task_id}`); 
+        if(!r.ok) {
+          errorCount++;
+          console.warn(`Poll error (${errorCount}/${maxErrors}):`, r.status);
+          if (errorCount >= maxErrors) {
+            clearInterval(pollIntervalHandle);
+            pollIntervalHandle = null;
+            showError('Error de conexión con el servidor');
+          }
+          return; 
+        }
+        errorCount = 0; // Reset on success
+        const js=await r.json(); 
+        if(js.partial) handlePartialUpdate(js); 
+        if(js.status==='finished' || js.status==='error' || js.status==='cancelled') { 
+          handleFinalResult(js.result||js.results||{}); 
+          clearInterval(pollIntervalHandle); 
+          pollIntervalHandle=null; 
+        } 
+      } catch(e) { 
+        errorCount++;
+        console.warn(`Poll exception (${errorCount}/${maxErrors}):`, e);
+        if (errorCount >= maxErrors) {
+          clearInterval(pollIntervalHandle);
+          pollIntervalHandle = null;
+          showError('Error de conexión persistente con el servidor');
+        }
+      }
     }, ms);
   }
 
@@ -338,42 +490,186 @@
 
   // Run quick
   runBtn && runBtn.addEventListener('click', async ()=>{
+    const device=(deviceEl?.value||'phone').trim();
+    const point=(pointEl?.value||'P1').trim();
+    const runIndex=Number(runEl?.value)||1;
+    
+    // Validation
+    if (!validateDeviceName(device)) {
+      showError('Nombre de dispositivo inválido (máximo 50 caracteres)');
+      return;
+    }
+    if (!validatePointName(point)) {
+      showError('Nombre de punto inválido. Use solo letras, números, guiones y guiones bajos.');
+      return;
+    }
+    if (runIndex < 1 || runIndex > 1000) {
+      showError('El índice de ejecución debe estar entre 1 y 1000');
+      return;
+    }
+    
     runBtn.disabled=true;
-    const device=(deviceEl?.value||'phone').trim(), point=(pointEl?.value||'P1').trim(), runIndex=Number(runEl?.value)||1;
     try{
-      const res=await fetch('/run_point',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ device, point, run: runIndex }) });
+      const res=await fetch('/run_point',{ 
+        method:'POST', 
+        headers:{'Content-Type':'application/json'}, 
+        body:JSON.stringify({ device, point, run: runIndex }) 
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: 'Error de conexión' }));
+        showError(errorData.error || `Error HTTP ${res.status}`);
+        return;
+      }
+      
       const j=await res.json();
-      if(!j || !j.ok){ liveSummary && (liveSummary.textContent = `Error: ${j?.error||'unknown'}`); runBtn.disabled=false; return; }
-      lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
-      liveChartReset(); showLiveVisuals(); liveSummary && (liveSummary.textContent='Tarea iniciada, esperando actualizaciones...'); openSseForTask(j.task_id); setMode('results');
-    }catch(e){ liveSummary && (liveSummary.textContent = `Error: ${e.message}`); } finally{ runBtn.disabled=false; }
+      if(!j || !j.ok){ 
+        showError(j?.error || 'Error desconocido');
+        return; 
+      }
+      
+      lastSurveyTaskId=j.task_id; 
+      $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id.substring(0, 8) + '...');
+      liveChartReset(); 
+      showLiveVisuals(); 
+      showSuccess('Tarea iniciada correctamente');
+      openSseForTask(j.task_id); 
+      setMode('results');
+    } catch(e) { 
+      showError(`Error de conexión: ${e.message}`);
+      console.error('Run point error:', e);
+    } finally { 
+      runBtn.disabled=false; 
+    }
   });
 
   // Survey
   startSurveyBtn && startSurveyBtn.addEventListener('click', async ()=>{
-    startSurveyBtn.disabled=true;
     const device=(surveyDeviceEl?.value||deviceEl?.value||'phone').trim();
-    const ptsRaw=(pointsEl?.value||'').trim(); if(!ptsRaw){ alert('Introduce puntos'); startSurveyBtn.disabled=false; return; }
-    const points= ptsRaw.includes(',') ? ptsRaw.split(',').map(s=>s.trim()).filter(Boolean) : ptsRaw.split(/\s+/).map(s=>s.trim()).filter(Boolean);
-    const repeats=Number(repeatsEl?.value)||1; const manual=!!manualCheckbox?.checked;
+    const ptsRaw=(pointsEl?.value||'').trim();
+    const repeats=Number(repeatsEl?.value)||1;
+    const manual=!!manualCheckbox?.checked;
+    
+    // Validation
+    if (!validateDeviceName(device)) {
+      showError('Nombre de dispositivo inválido (máximo 50 caracteres)');
+      return;
+    }
+    if(!ptsRaw) { 
+      showError('Debe introducir al menos un punto'); 
+      return; 
+    }
+    
+    const points= ptsRaw.includes(',') 
+      ? ptsRaw.split(',').map(s=>s.trim()).filter(Boolean) 
+      : ptsRaw.split(/\s+/).map(s=>s.trim()).filter(Boolean);
+    
+    if (points.length === 0) {
+      showError('Debe introducir al menos un punto válido');
+      return;
+    }
+    if (points.length > 100) {
+      showError('Demasiados puntos (máximo 100)');
+      return;
+    }
+    
+    // Validate each point name
+    for (const pt of points) {
+      if (!validatePointName(pt)) {
+        showError(`Nombre de punto inválido: "${pt}". Use solo letras, números, guiones y guiones bajos.`);
+        return;
+      }
+    }
+    
+    if (repeats < 1 || repeats > 50) {
+      showError('Las repeticiones deben estar entre 1 y 50');
+      return;
+    }
+    
+    startSurveyBtn.disabled=true;
     try{
-      const res=await fetch('/start_survey',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ device, points, repeats, manual }) });
+      const res=await fetch('/start_survey',{ 
+        method:'POST', 
+        headers:{'Content-Type':'application/json'}, 
+        body:JSON.stringify({ device, points, repeats, manual }) 
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: 'Error de conexión' }));
+        showError(errorData.error || `Error HTTP ${res.status}`);
+        if (surveyLog) surveyLog.textContent = 'Error: ' + (errorData.error || 'Unknown error');
+        return;
+      }
+      
       const j=await res.json();
-      if(!j.ok){ surveyLog && (surveyLog.textContent='Error: ' + (j.error||'')); startSurveyBtn.disabled=false; return; }
-      lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
+      if(!j.ok) { 
+        showError(j.error || 'Error desconocido');
+        if (surveyLog) surveyLog.textContent='Error: ' + (j.error||''); 
+        return; 
+      }
+      
+      lastSurveyTaskId=j.task_id; 
+      $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id.substring(0, 8) + '...');
       cancelTaskBtn && (cancelTaskBtn.disabled=false);
-      liveChartReset(); showLiveVisuals(); openSseForTask(j.task_id); surveyArea && (surveyArea.hidden=false); setMode('results');
-    }catch(e){ surveyLog && (surveyLog.textContent='Error al iniciar: '+e); } finally{ startSurveyBtn.disabled=false; }
+      liveChartReset(); 
+      showLiveVisuals(); 
+      openSseForTask(j.task_id); 
+      surveyArea && (surveyArea.hidden=false); 
+      setMode('results');
+      showSuccess('Encuesta iniciada correctamente');
+    } catch(e) { 
+      showError(`Error de conexión: ${e.message}`);
+      if (surveyLog) surveyLog.textContent='Error al iniciar: '+e; 
+      console.error('Start survey error:', e);
+    } finally { 
+      startSurveyBtn.disabled=false; 
+    }
   });
 
-  // Proceed / Cancel
+  // Proceed / Cancel with better error handling
   proceedBtn && proceedBtn.addEventListener('click', async ()=>{
-    if(!lastSurveyTaskId){ alert('No hay encuesta en curso'); return; }
-    proceedBtn.disabled=true; try{ const r=await fetch(`/task_proceed/${encodeURIComponent(lastSurveyTaskId)}`,{method:'POST'}); const js=await r.json(); if(!js.ok) alert('Error al proceder: '+(js.error||'')); }catch(e){ alert('Error: '+e); } finally{ proceedBtn.disabled=false; }
+    if(!lastSurveyTaskId){ 
+      showError('No hay encuesta en curso'); 
+      return; 
+    }
+    proceedBtn.disabled=true; 
+    try{ 
+      const r=await fetch(`/task_proceed/${encodeURIComponent(lastSurveyTaskId)}`,{method:'POST'}); 
+      if (!r.ok) {
+        const errorData = await r.json().catch(() => ({ error: 'Error de conexión' }));
+        showError('Error al proceder: '+(errorData.error||''));
+        return;
+      }
+      const js=await r.json(); 
+      if(!js.ok) {
+        showError('Error al proceder: '+(js.error||''));
+      } else {
+        showSuccess('Continuando con siguiente punto...', 2000);
+      }
+    } catch(e) { 
+      showError(`Error de conexión: ${e.message}`); 
+      console.error('Proceed error:', e);
+    } finally { 
+      proceedBtn.disabled=false; 
+    }
   });
+  
   cancelTaskBtn && cancelTaskBtn.addEventListener('click', async ()=>{
-    if(!lastSurveyTaskId){ alert('No hay encuesta en curso'); return; }
-    try{ await fetch(`/task_cancel/${encodeURIComponent(lastSurveyTaskId)}`,{method:'POST'}); }catch{}
+    if(!lastSurveyTaskId){ 
+      showError('No hay encuesta en curso'); 
+      return; 
+    }
+    if (!confirm('¿Está seguro de que desea cancelar la encuesta?')) {
+      return;
+    }
+    try{ 
+      await fetch(`/task_cancel/${encodeURIComponent(lastSurveyTaskId)}`,{method:'POST'}); 
+      showSuccess('Encuesta cancelada', 3000);
+      cancelTaskBtn.disabled=true;
+    } catch(e) {
+      showError(`Error al cancelar: ${e.message}`);
+      console.error('Cancel error:', e);
+    }
   });
 
   // Export helpers
