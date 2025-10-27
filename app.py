@@ -535,40 +535,39 @@ def start_survey():
                             tasks[p_id]["logs"].append("Survey cancelled")
                             tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
                             return
-                if manual:
-                    with tasks_lock:
-                        tasks[p_id]["waiting"] = True
-                        tasks[p_id]["logs"].append(f"Waiting at point {pt}")
-                        tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
-                    while True:
-                        time.sleep(0.5)
+                    if manual:
                         with tasks_lock:
-                            if tasks[p_id].get("cancel"):
-                                tasks[p_id]["status"] = "cancelled"
-                                tasks[p_id]["logs"].append("Survey cancelled during wait")
-                                tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
-                                return
-                            if tasks[p_id].get("proceed"):
-                                tasks[p_id]["proceed"] = False
-                                tasks[p_id]["waiting"] = False
-                                tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
-                                break
-                child_id = str(uuid.uuid4())
-                with tasks_lock:
-                    tasks[child_id] = {"status":"queued", "total":1, "done":0, "logs":[], "results": [], "partial": {}, "seq": 0}
-                worker_run_point(child_id, device, pt, rep+1, IPERF_DURATION, IPERF_PARALLEL)
-                with tasks_lock:
-                    child_result = tasks[child_id].get("result")
-                    if child_result:
-                        tasks[p_id]["results"].append(child_result)
-                        tasks[p_id]["done"] += 1
-                        tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
-                        tasks[p_id]["logs"].append(f"Point done: {pt} ({tasks[p_id]['done']}/{tasks[p_id]['total']})")
-        with tasks_lock:
-            tasks[p_id]["status"] = "finished"
-            tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
-            tasks[p_id]["logs"].append("Survey finished")
-        return
+                            tasks[p_id]["waiting"] = True
+                            tasks[p_id]["logs"].append(f"Waiting at point {pt}")
+                            tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
+                        while True:
+                            time.sleep(0.5)
+                            with tasks_lock:
+                                if tasks[p_id].get("cancel"):
+                                    tasks[p_id]["status"] = "cancelled"
+                                    tasks[p_id]["logs"].append("Survey cancelled during wait")
+                                    tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
+                                    return
+                                if tasks[p_id].get("proceed"):
+                                    tasks[p_id]["proceed"] = False
+                                    tasks[p_id]["waiting"] = False
+                                    tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
+                                    break
+                    child_id = str(uuid.uuid4())
+                    with tasks_lock:
+                        tasks[child_id] = {"status":"queued", "total":1, "done":0, "logs":[], "results": [], "partial": {}, "seq": 0}
+                    worker_run_point(child_id, device, pt, rep+1, IPERF_DURATION, IPERF_PARALLEL)
+                    with tasks_lock:
+                        child_result = tasks[child_id].get("result")
+                        if child_result:
+                            tasks[p_id]["results"].append(child_result)
+                            tasks[p_id]["done"] += 1
+                            tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
+                            tasks[p_id]["logs"].append(f"Point done: {pt} ({tasks[p_id]['done']}/{tasks[p_id]['total']})")
+            with tasks_lock:
+                tasks[p_id]["status"] = "finished"
+                tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
+                tasks[p_id]["logs"].append("Survey finished")
         
         t = threading.Thread(
             target=survey_worker,
