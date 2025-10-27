@@ -142,7 +142,7 @@
               <label for="point">Punto</label>
               <input id="point" type="text" value="P1" placeholder="Ej: P1, A1, Sala-1" maxlength="100" 
                      pattern="[a-zA-Z0-9_-]+" 
-                     title="Identificador del punto de medición (solo letras, números, guiones)" />
+                     title="Identificador del punto de medición (letras, números, guiones y guión bajo)" />
             </div>
             <div>
               <label for="run">Repetición</label>
@@ -172,8 +172,8 @@
             </div>
             <div>
               <label for="points">Puntos de medición (separados por espacios o comas)</label>
-              <textarea id="points" rows="3" placeholder="Ej: A1 A2 A3 o Sala-1, Sala-2, Patio" 
-                        title="Lista de puntos a medir (máx. 100 puntos)"></textarea>
+              <textarea id="points" rows="3" placeholder="Ej: P1 P2 P3&#10;o bien: Sala-1, Sala-2, Patio&#10;(Formato: letras, números, guiones y guión bajo)" 
+                        title="Lista de puntos a medir (máx. 100 puntos). Separe con espacios o comas. Use solo letras, números, guiones y guión bajo en cada nombre."></textarea>
             </div>
 
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
