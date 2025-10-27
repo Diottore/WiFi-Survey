@@ -23,6 +23,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Safety limits for process output
+MAX_LINES_PER_SECOND = 10  # Maximum expected lines per second for ping output
+MAX_OUTPUT_LINES = 1000     # Maximum lines to process from iperf3 output
+
 # Load configuration
 def load_config():
     """Load configuration from config.local.ini or config.ini"""
@@ -238,7 +242,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
                     update_partial(ping_vals=ping_samples, force_sample=True)
                 line_count += 1
                 # Safety check: don't process too many lines
-                if line_count > duration * 10:
+                if line_count > duration * MAX_LINES_PER_SECOND:
                     with tasks_lock:
                         tasks[task_id]["logs"].append("Warning: ping output excessive, stopping")
                     p.terminate()
@@ -278,7 +282,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
                     tasks[task_id]["logs"].append(line if len(line) < 1000 else line[:1000])
             line_count += 1
             # Safety limit on lines processed
-            if line_count > 1000:
+            if line_count > MAX_OUTPUT_LINES:
                 with tasks_lock:
                     tasks[task_id]["logs"].append("Warning: iperf DL output excessive")
                 break
@@ -329,7 +333,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
                     tasks[task_id]["logs"].append(line if len(line) < 1000 else line[:1000])
             line_count += 1
             # Safety limit on lines processed
-            if line_count > 1000:
+            if line_count > MAX_OUTPUT_LINES:
                 with tasks_lock:
                     tasks[task_id]["logs"].append("Warning: iperf UL output excessive")
                 break
