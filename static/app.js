@@ -308,15 +308,30 @@
     if(pollIntervalHandle) clearInterval(pollIntervalHandle);
     pollIntervalHandle=setInterval(async()=>{
       try{
-        const r=await fetch(`/task_status/${task_id}`);
-        if(!r.ok) return;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const r=await fetch(`/task_status/${task_id}`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        
+        if(!r.ok) {
+          console.warn(`Poll failed: HTTP ${r.status}`);
+          return;
+        }
+        
         const js=await r.json();
         if(js.partial) handlePartialUpdate(js);
         if(js.status==='finished'){
           handleFinalResult(js.result||js.results||{});
           clearInterval(pollIntervalHandle); pollIntervalHandle=null;
         }
-      }catch(e){ console.warn('poll error',e); }
+      }catch(e){ 
+        if(e.name === 'AbortError'){
+          console.warn('Poll timeout for task', task_id);
+        } else {
+          console.warn('Poll error:', e);
+        }
+      }
     }, ms);
   }
 
@@ -325,10 +340,22 @@
 
   async function updateRemaining(elapsed, partial){
     try{
-      const cfg = await fetch('/_survey_config').then(r=>r.ok? r.json(): null);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      
+      const cfg = await fetch('/_survey_config', { signal: controller.signal })
+        .then(r=>{
+          clearTimeout(timeoutId);
+          return r.ok? r.json(): null;
+        });
+      
       const dur = (cfg && cfg.IPERF_DURATION) ? cfg.IPERF_DURATION : (partial?.duration || 20);
       timeRemainingEl && (timeRemainingEl.textContent = fmtTime(Math.max(0, dur - (elapsed||0))));
-    }catch{}
+    }catch(e){
+      // Fallback silently - use partial data
+      const dur = partial?.duration || 20;
+      timeRemainingEl && (timeRemainingEl.textContent = fmtTime(Math.max(0, dur - (elapsed||0))));
+    }
   }
 
   function handlePartialUpdate(dataContainer){
@@ -525,7 +552,8 @@
   // Run quick
   runBtn && runBtn.addEventListener('click', async ()=>{
     runBtn.disabled=true;
-    runBtn.classList.add('loading');
+    const originalText = runBtn.textContent;
+    runBtn.textContent = '🔄 Ejecutando...';
     quickStatusEl && (quickStatusEl.textContent = '');
     
     const device=(deviceEl?.value||'').trim();
@@ -537,21 +565,21 @@
       quickStatusEl && (quickStatusEl.textContent = '⚠️ Por favor ingresa el nombre del dispositivo');
       quickStatusEl && (quickStatusEl.style.color = '#ef4444');
       runBtn.disabled=false;
-      runBtn.classList.remove('loading');
+      runBtn.textContent = originalText;
       return; 
     }
     if(!point){ 
       quickStatusEl && (quickStatusEl.textContent = '⚠️ Por favor ingresa el ID del punto');
       quickStatusEl && (quickStatusEl.style.color = '#ef4444');
       runBtn.disabled=false;
-      runBtn.classList.remove('loading');
+      runBtn.textContent = originalText;
       return; 
     }
     if(runIndex < 1 || runIndex > 100){
       quickStatusEl && (quickStatusEl.textContent = '⚠️ La repetición debe estar entre 1 y 100');
       quickStatusEl && (quickStatusEl.style.color = '#ef4444');
       runBtn.disabled=false;
-      runBtn.classList.remove('loading');
+      runBtn.textContent = originalText;
       return;
     }
     
@@ -559,7 +587,21 @@
     quickStatusEl && (quickStatusEl.style.color = '#0b74ff');
     
     try{
-      const res=await fetch('/run_point',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ device, point, run: runIndex }) });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout for initial request
+      
+      const res=await fetch('/run_point',{ 
+        method:'POST', 
+        headers:{'Content-Type':'application/json'}, 
+        body:JSON.stringify({ device, point, run: runIndex }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      
+      if(!res.ok){
+        throw new Error(`Error del servidor: ${res.status} ${res.statusText}`);
+      }
+      
       const j=await res.json();
       if(!j || !j.ok){ 
         const errorMsg = j?.error || 'Error desconocido';
@@ -567,7 +609,7 @@
         quickStatusEl && (quickStatusEl.style.color = '#ef4444');
         liveSummary && (liveSummary.textContent = `Error: ${errorMsg}`); 
         runBtn.disabled=false;
-        runBtn.classList.remove('loading');
+        runBtn.textContent = originalText;
         return; 
       }
       lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
@@ -580,19 +622,24 @@
       openSseForTask(j.task_id); 
       setMode('results');
     }catch(e){ 
-      quickStatusEl && (quickStatusEl.textContent = `❌ Error de conexión: ${e.message}`);
+      if(e.name === 'AbortError'){
+        quickStatusEl && (quickStatusEl.textContent = '❌ Timeout: El servidor no respondió a tiempo');
+      } else {
+        quickStatusEl && (quickStatusEl.textContent = `❌ Error de conexión: ${e.message}`);
+      }
       quickStatusEl && (quickStatusEl.style.color = '#ef4444');
       liveSummary && (liveSummary.textContent = `Error: ${e.message}`); 
     } finally{ 
       runBtn.disabled=false;
-      runBtn.classList.remove('loading');
+      runBtn.textContent = originalText;
     }
   });
 
   // Survey
   startSurveyBtn && startSurveyBtn.addEventListener('click', async ()=>{
     startSurveyBtn.disabled=true;
-    startSurveyBtn.classList.add('loading');
+    const originalText = startSurveyBtn.textContent;
+    startSurveyBtn.textContent = '🔄 Iniciando...';
     surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '');
     
     const device=(surveyDeviceEl?.value||deviceEl?.value||'').trim();
@@ -605,21 +652,21 @@
       surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ Por favor ingresa el nombre del dispositivo');
       surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
       startSurveyBtn.disabled=false;
-      startSurveyBtn.classList.remove('loading');
+      startSurveyBtn.textContent = originalText;
       return;
     }
     if(!ptsRaw){ 
       surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ Por favor ingresa al menos un punto'); 
       surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
       startSurveyBtn.disabled=false;
-      startSurveyBtn.classList.remove('loading');
+      startSurveyBtn.textContent = originalText;
       return; 
     }
     if(repeats < 1 || repeats > 100){
       surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ Las repeticiones deben estar entre 1 y 100');
       surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
       startSurveyBtn.disabled=false;
-      startSurveyBtn.classList.remove('loading');
+      startSurveyBtn.textContent = originalText;
       return;
     }
     
@@ -629,7 +676,7 @@
       surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ No se detectaron puntos válidos');
       surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
       startSurveyBtn.disabled=false;
-      startSurveyBtn.classList.remove('loading');
+      startSurveyBtn.textContent = originalText;
       return;
     }
     
@@ -637,7 +684,21 @@
     surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#0b74ff');
     
     try{
-      const res=await fetch('/start_survey',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ device, points, repeats, manual }) });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout for initial request
+      
+      const res=await fetch('/start_survey',{ 
+        method:'POST', 
+        headers:{'Content-Type':'application/json'}, 
+        body:JSON.stringify({ device, points, repeats, manual }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      
+      if(!res.ok){
+        throw new Error(`Error del servidor: ${res.status} ${res.statusText}`);
+      }
+      
       const j=await res.json();
       if(!j.ok){ 
         const errorMsg = j.error || 'Error desconocido';
@@ -645,7 +706,7 @@
         surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
         surveyLog && (surveyLog.textContent='Error: ' + errorMsg); 
         startSurveyBtn.disabled=false;
-        startSurveyBtn.classList.remove('loading');
+        startSurveyBtn.textContent = originalText;
         return; 
       }
       lastSurveyTaskId=j.task_id; $('lastSurveyId') && ($('lastSurveyId').textContent=j.task_id);
@@ -657,77 +718,201 @@
       surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#10b981');
       openSseForTask(j.task_id); surveyArea && (surveyArea.hidden=false); setMode('results');
     }catch(e){ 
-      surveyStatusMsgEl && (surveyStatusMsgEl.textContent = `❌ Error de conexión: ${e.message}`);
+      if(e.name === 'AbortError'){
+        surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '❌ Timeout: El servidor no respondió a tiempo');
+      } else {
+        surveyStatusMsgEl && (surveyStatusMsgEl.textContent = `❌ Error de conexión: ${e.message}`);
+      }
       surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
       surveyLog && (surveyLog.textContent='Error al iniciar: '+e); 
     } finally{ 
       startSurveyBtn.disabled=false;
-      startSurveyBtn.classList.remove('loading');
+      startSurveyBtn.textContent = originalText;
     }
   });
 
   // Proceed / Cancel
   proceedBtn && proceedBtn.addEventListener('click', async ()=>{
     if(!lastSurveyTaskId){ alert('No hay encuesta en curso'); return; }
-    proceedBtn.disabled=true; try{
-      const r=await fetch(`/task_proceed/${encodeURIComponent(lastSurveyTaskId)}`,{method:'POST'}); const js=await r.json();
-      if(!js.ok) alert('Error al proceder: '+(js.error||''));
-    }catch(e){ alert('Error: '+e); } finally{ proceedBtn.disabled=false; }
+    proceedBtn.disabled=true;
+    const originalText = proceedBtn.textContent;
+    proceedBtn.textContent = '🔄 Procesando...';
+    
+    try{
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      const r=await fetch(`/task_proceed/${encodeURIComponent(lastSurveyTaskId)}`,{
+        method:'POST',
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      
+      if(!r.ok){
+        throw new Error(`Error del servidor: ${r.status}`);
+      }
+      
+      const js=await r.json();
+      if(!js.ok) {
+        alert('Error al proceder: '+(js.error||'Error desconocido'));
+      }
+    }catch(e){
+      if(e.name === 'AbortError'){
+        alert('Timeout: El servidor no respondió a tiempo');
+      } else {
+        alert('Error: '+e.message);
+      }
+    } finally{
+      proceedBtn.disabled=false;
+      proceedBtn.textContent = originalText;
+    }
   });
+  
   cancelTaskBtn && cancelTaskBtn.addEventListener('click', async ()=>{
     if(!lastSurveyTaskId){ alert('No hay encuesta en curso'); return; }
-    try{ await fetch(`/task_cancel/${encodeURIComponent(lastSurveyTaskId)}`,{method:'POST'}); }catch{}
+    if(!confirm('¿Estás seguro de cancelar la encuesta en curso?')) return;
+    
+    cancelTaskBtn.disabled=true;
+    const originalText = cancelTaskBtn.textContent;
+    cancelTaskBtn.textContent = '🔄 Cancelando...';
+    
+    try{
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      await fetch(`/task_cancel/${encodeURIComponent(lastSurveyTaskId)}`,{
+        method:'POST',
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      
+      surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '⚠️ Encuesta cancelada');
+      surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#ef4444');
+    }catch(e){
+      if(e.name === 'AbortError'){
+        alert('Timeout: No se pudo cancelar la encuesta');
+      } else {
+        console.error('Error cancelando encuesta:', e);
+      }
+    } finally{
+      cancelTaskBtn.disabled=false;
+      cancelTaskBtn.textContent = originalText;
+    }
   });
 
   // Export
-  exportJsonBtn?.addEventListener('click', ()=> download('wifi_recent.json', JSON.stringify(results.slice(0,1000), null, 2), 'application/json'));
+  exportJsonBtn?.addEventListener('click', async ()=> {
+    exportJsonBtn.disabled=true;
+    const originalText = exportJsonBtn.textContent;
+    exportJsonBtn.textContent = '🔄 Exportando...';
+    
+    try{
+      download('wifi_recent.json', JSON.stringify(results.slice(0,1000), null, 2), 'application/json');
+    }catch(e){
+      alert('Error al exportar JSON: ' + e.message);
+    }finally{
+      exportJsonBtn.disabled=false;
+      exportJsonBtn.textContent = originalText;
+    }
+  });
+  
   clearResultsBtn?.addEventListener('click', ()=> {
+    if(!confirm('¿Estás seguro de limpiar todos los resultados?')) return;
+    
     results=[]; resultsList && (resultsList.innerHTML='');
     if(resultsChart){ resultsChart.setOption({ xAxis:{data:[]}, series:[{data:[]},{data:[]},{data:[]}] }, {notMerge:true}); }
     updateSummary(); emptyState && (emptyState.style.display='block');
   });
-  exportCsvWideBtn?.addEventListener('click', ()=>{
-    const header=['point','n','dl_avg','dl_min','dl_max','dl_std','ul_avg','ul_min','ul_max','ul_std','ping_avg','ping_min','ping_max','ping_std','ping_p50','ping_p95','loss_avg'];
-    const lines=[toCsvRow(header)];
-    const byPoint=groupBy(results,'point');
-    for(const [pt,arr] of byPoint.entries()){
-      const sDL=stats(arr.map(x=>Number(x.iperf_dl_mbps))); const sUL=stats(arr.map(x=>Number(x.iperf_ul_mbps)));
-      const pAvg=stats(arr.map(x=>Number(x.ping_avg))); const p50s=stats(arr.map(x=>Number(x.ping_p50))); const p95s=stats(arr.map(x=>Number(x.ping_p95)));
-      const lossVals=arr.map(x=>Number(x.ping_loss_pct)).filter(v=>!isNaN(v)); const lossAvg=lossVals.length? lossVals.reduce((a,b)=>a+b,0)/lossVals.length : null;
-      lines.push(toCsvRow([pt,sDL.n,sDL.avg?.toFixed(4),sDL.min?.toFixed(4),sDL.max?.toFixed(4),sDL.std?.toFixed(4),
-        sUL.avg?.toFixed(4),sUL.min?.toFixed(4),sUL.max?.toFixed(4),sUL.std?.toFixed(4),
-        pAvg.avg?.toFixed(4),pAvg.min?.toFixed(4),pAvg.max?.toFixed(4),pAvg.std?.toFixed(4),
-        p50s.p50?.toFixed(4),p95s.p95?.toFixed(4),lossAvg!=null?lossAvg.toFixed(4):'']));
-    }
-    download('wifi_results_wide.csv', lines.join('\n'), 'text/csv');
-  });
-  exportCsvLongBtn?.addEventListener('click', ()=>{
-    const header=['device','point','timestamp','ssid','bssid','rssi','dl_mbps','ul_mbps','ping_avg_ms','ping_p50_ms','ping_p95_ms','ping_loss_pct','ping_jitter_ms','raw_file'];
-    const lines=[toCsvRow(header)];
-    results.forEach(r=> lines.push(toCsvRow([r.device,r.point,r.timestamp,r.ssid,r.bssid,r.rssi,r.iperf_dl_mbps,r.iperf_ul_mbps,r.ping_avg,r.ping_p50,r.ping_p95,r.ping_loss_pct,r.ping_jitter,r.raw_file])));
-    download('wifi_results_long.csv', lines.join('\n'), 'text/csv');
-  });
-  exportSummaryJsonBtn?.addEventListener('click', ()=>{
-    const summary={}; const byPoint=groupBy(results,'point');
-    for(const [pt,arr] of byPoint.entries()){
-      const sDL=stats(arr.map(x=>Number(x.iperf_dl_mbps))); const sUL=stats(arr.map(x=>Number(x.iperf_ul_mbps)));
-      const pAvg=stats(arr.map(x=>Number(x.ping_avg))); const p50s=stats(arr.map(x=>Number(x.ping_p50))); const p95s=stats(arr.map(x=>Number(x.ping_p95)));
-      const lossVals=arr.map(x=>Number(x.ping_loss_pct)).filter(v=>!isNaN(v));
-      summary[pt]={ count:sDL.n, dl:{avg:sDL.avg,min:sDL.min,max:sDL.max,std:sDL.std}, ul:{avg:sUL.avg,min:sUL.min,max:sUL.max,std:sUL.std},
-        ping:{avg:pAvg.avg,min:pAvg.min,max:pAvg.max,std:pAvg.std,p50:p50s.p50,p95:p95s.p95},
-        loss_avg: lossVals.length? lossVals.reduce((a,b)=>a+b,0)/lossVals.length : null };
-    }
-    download('wifi_summary.json', JSON.stringify(summary,null,2), 'application/json');
-  });
-  exportSamplesCsvBtn?.addEventListener('click', ()=>{
-    const header=['device','point','timestamp','t_s','dl_inst_mbps','ul_inst_mbps','ping_inst_ms'];
-    const lines=[toCsvRow(header)];
-    results.forEach(r=>{
-      if(Array.isArray(r.samples)){
-        r.samples.forEach(s=> lines.push(toCsvRow([r.device,r.point,r.timestamp, s.t??'', s.dl??'', s.ul??'', s.ping??'' ])));
+  
+  exportCsvWideBtn?.addEventListener('click', async ()=>{
+    exportCsvWideBtn.disabled=true;
+    const originalText = exportCsvWideBtn.textContent;
+    exportCsvWideBtn.textContent = '🔄 Exportando...';
+    
+    try{
+      const header=['point','n','dl_avg','dl_min','dl_max','dl_std','ul_avg','ul_min','ul_max','ul_std','ping_avg','ping_min','ping_max','ping_std','ping_p50','ping_p95','loss_avg'];
+      const lines=[toCsvRow(header)];
+      const byPoint=groupBy(results,'point');
+      for(const [pt,arr] of byPoint.entries()){
+        const sDL=stats(arr.map(x=>Number(x.iperf_dl_mbps))); const sUL=stats(arr.map(x=>Number(x.iperf_ul_mbps)));
+        const pAvg=stats(arr.map(x=>Number(x.ping_avg))); const p50s=stats(arr.map(x=>Number(x.ping_p50))); const p95s=stats(arr.map(x=>Number(x.ping_p95)));
+        const lossVals=arr.map(x=>Number(x.ping_loss_pct)).filter(v=>!isNaN(v)); const lossAvg=lossVals.length? lossVals.reduce((a,b)=>a+b,0)/lossVals.length : null;
+        lines.push(toCsvRow([pt,sDL.n,sDL.avg?.toFixed(4),sDL.min?.toFixed(4),sDL.max?.toFixed(4),sDL.std?.toFixed(4),
+          sUL.avg?.toFixed(4),sUL.min?.toFixed(4),sUL.max?.toFixed(4),sUL.std?.toFixed(4),
+          pAvg.avg?.toFixed(4),pAvg.min?.toFixed(4),pAvg.max?.toFixed(4),pAvg.std?.toFixed(4),
+          p50s.p50?.toFixed(4),p95s.p95?.toFixed(4),lossAvg!=null?lossAvg.toFixed(4):'']));
       }
-    });
-    download('wifi_samples_long.csv', lines.join('\n'), 'text/csv');
+      download('wifi_results_wide.csv', lines.join('\n'), 'text/csv');
+    }catch(e){
+      alert('Error al exportar CSV: ' + e.message);
+    }finally{
+      exportCsvWideBtn.disabled=false;
+      exportCsvWideBtn.textContent = originalText;
+    }
+  });
+  
+  exportCsvLongBtn?.addEventListener('click', async ()=>{
+    exportCsvLongBtn.disabled=true;
+    const originalText = exportCsvLongBtn.textContent;
+    exportCsvLongBtn.textContent = '🔄 Exportando...';
+    
+    try{
+      const header=['device','point','timestamp','ssid','bssid','rssi','dl_mbps','ul_mbps','ping_avg_ms','ping_p50_ms','ping_p95_ms','ping_loss_pct','ping_jitter_ms','raw_file'];
+      const lines=[toCsvRow(header)];
+      results.forEach(r=> lines.push(toCsvRow([r.device,r.point,r.timestamp,r.ssid,r.bssid,r.rssi,r.iperf_dl_mbps,r.iperf_ul_mbps,r.ping_avg,r.ping_p50,r.ping_p95,r.ping_loss_pct,r.ping_jitter,r.raw_file])));
+      download('wifi_results_long.csv', lines.join('\n'), 'text/csv');
+    }catch(e){
+      alert('Error al exportar CSV: ' + e.message);
+    }finally{
+      exportCsvLongBtn.disabled=false;
+      exportCsvLongBtn.textContent = originalText;
+    }
+  });
+  
+  exportSummaryJsonBtn?.addEventListener('click', async ()=>{
+    exportSummaryJsonBtn.disabled=true;
+    const originalText = exportSummaryJsonBtn.textContent;
+    exportSummaryJsonBtn.textContent = '🔄 Exportando...';
+    
+    try{
+      const summary={}; const byPoint=groupBy(results,'point');
+      for(const [pt,arr] of byPoint.entries()){
+        const sDL=stats(arr.map(x=>Number(x.iperf_dl_mbps))); const sUL=stats(arr.map(x=>Number(x.iperf_ul_mbps)));
+        const pAvg=stats(arr.map(x=>Number(x.ping_avg))); const p50s=stats(arr.map(x=>Number(x.ping_p50))); const p95s=stats(arr.map(x=>Number(x.ping_p95)));
+        const lossVals=arr.map(x=>Number(x.ping_loss_pct)).filter(v=>!isNaN(v));
+        summary[pt]={ count:sDL.n, dl:{avg:sDL.avg,min:sDL.min,max:sDL.max,std:sDL.std}, ul:{avg:sUL.avg,min:sUL.min,max:sUL.max,std:sUL.std},
+          ping:{avg:pAvg.avg,min:pAvg.min,max:pAvg.max,std:pAvg.std,p50:p50s.p50,p95:p95s.p95},
+          loss_avg: lossVals.length? lossVals.reduce((a,b)=>a+b,0)/lossVals.length : null };
+      }
+      download('wifi_summary.json', JSON.stringify(summary,null,2), 'application/json');
+    }catch(e){
+      alert('Error al exportar JSON: ' + e.message);
+    }finally{
+      exportSummaryJsonBtn.disabled=false;
+      exportSummaryJsonBtn.textContent = originalText;
+    }
+  });
+  
+  exportSamplesCsvBtn?.addEventListener('click', async ()=>{
+    exportSamplesCsvBtn.disabled=true;
+    const originalText = exportSamplesCsvBtn.textContent;
+    exportSamplesCsvBtn.textContent = '🔄 Exportando...';
+    
+    try{
+      const header=['device','point','timestamp','t_s','dl_inst_mbps','ul_inst_mbps','ping_inst_ms'];
+      const lines=[toCsvRow(header)];
+      results.forEach(r=>{
+        if(Array.isArray(r.samples)){
+          r.samples.forEach(s=> lines.push(toCsvRow([r.device,r.point,r.timestamp, s.t??'', s.dl??'', s.ul??'', s.ping??'' ])));
+        }
+      });
+      download('wifi_samples_long.csv', lines.join('\n'), 'text/csv');
+    }catch(e){
+      alert('Error al exportar CSV: ' + e.message);
+    }finally{
+      exportSamplesCsvBtn.disabled=false;
+      exportSamplesCsvBtn.textContent = originalText;
+    }
   });
 
   function updateSummary(){
@@ -750,14 +935,30 @@
   // Load and display test configuration
   async function loadTestConfig(){
     try{
-      const cfg = await fetch('/_survey_config').then(r=>r.ok? r.json(): null);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      const cfg = await fetch('/_survey_config', { signal: controller.signal })
+        .then(r => {
+          clearTimeout(timeoutId);
+          if(!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        });
+      
       if(cfg){
         const testConfigEl = document.getElementById('testConfig');
         if(testConfigEl){
           testConfigEl.textContent = `${cfg.IPERF_DURATION}s × ${cfg.IPERF_PARALLEL} streams → ${cfg.SERVER_IP}`;
         }
       }
-    }catch(e){ console.warn('Failed to load config:', e); }
+    }catch(e){ 
+      console.warn('Failed to load config:', e);
+      const testConfigEl = document.getElementById('testConfig');
+      if(testConfigEl){
+        testConfigEl.textContent = 'Config no disponible';
+        testConfigEl.style.color = '#6b7280';
+      }
+    }
   }
   loadTestConfig();
   
@@ -779,17 +980,36 @@
   // Health check periódico
   async function checkHealth(){
     try{
-      const r = await fetch('/_health');
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      
+      const r = await fetch('/_health', { signal: controller.signal });
+      clearTimeout(timeoutId);
+      
+      if(!r.ok) throw new Error(`HTTP ${r.status}`);
+      
       const h = await r.json();
       const statusEl = document.querySelector('.status');
       if(statusEl){
-        if(h.status === 'ok') statusEl.className = 'status online';
-        else statusEl.className = 'status offline';
+        if(h.status === 'ok') {
+          statusEl.className = 'status online';
+          statusEl.title = 'Sistema operativo';
+        } else {
+          statusEl.className = 'status offline';
+          statusEl.title = 'Sistema con problemas';
+        }
       }
       // Log warnings si hay problemas
       if(!h.checks?.server_reachable) console.warn('Server not reachable:', h.checks?.server_error);
       if(!h.checks?.iperf3_available) console.warn('iperf3 not available');
-    }catch(e){ console.warn('Health check failed:', e); }
+    }catch(e){ 
+      console.warn('Health check failed:', e);
+      const statusEl = document.querySelector('.status');
+      if(statusEl){
+        statusEl.className = 'status offline';
+        statusEl.title = 'No se puede conectar al servidor';
+      }
+    }
   }
   checkHealth();
   setInterval(checkHealth, 30000); // Check every 30s
