@@ -49,3 +49,9 @@ Thumbs.db
 *.bak
 *.orig
 .~*
+
+# WiFi-Tester backend
+backend/db.sqlite
+backend/db.sqlite-journal
+backend/venv/
+backend/.pytest_cache/
