@@ -11,7 +11,10 @@ from app.runner import TestRunner
 @pytest.fixture
 def test_engine():
     """Create a test database engine."""
-    engine = create_engine("sqlite:///:memory:")
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False}
+    )
     SQLModel.metadata.create_all(engine)
     return engine
 

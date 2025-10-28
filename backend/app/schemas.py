@@ -33,7 +33,7 @@ class ContinuePointRequest(BaseModel):
 
 class JobStatusResponse(BaseModel):
     """Response schema for job status."""
-    job_id: int
+    id: int
     status: str
     target_host: str
     iperf_mode: str
@@ -41,8 +41,7 @@ class JobStatusResponse(BaseModel):
     repetitions: int
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class PointStatusResponse(BaseModel):
@@ -53,8 +52,7 @@ class PointStatusResponse(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
     
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class StatusResponse(BaseModel):
@@ -80,5 +78,4 @@ class MeasurementResponse(BaseModel):
     bssid: Optional[str] = None
     frequency_mhz: Optional[int] = None
     
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}

@@ -194,7 +194,7 @@ async def get_status(
 @app.get("/api/export")
 async def export_data(
     job_id: int = Query(...),
-    format: str = Query("csv", regex="^(csv|json)$"),
+    format: str = Query("csv", pattern="^(csv|json)$"),
     session: Session = Depends(get_session)
 ):
     """
