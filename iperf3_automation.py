@@ -94,7 +94,7 @@ def run_test(agent: Dict[str, str]) -> None:
                 if line.startswith("signal:"):
                     # ejemplo: signal: -43 dBm
                     rssi = int(line.split()[1])
-        except (ValueError, IndexError, KeyError, json.JSONDecodeError) as e:
+        except (ValueError, IndexError, KeyError) as e:
             logger.warning(f"Could not get RSSI for {agent['host']}: {e}")
             rssi = None
 
