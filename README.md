@@ -8,6 +8,29 @@
 
 **🚀 [Guía de Inicio Rápido](QUICKSTART.md)** | **📚 [Documentación Completa](#-documentación)** | **🤝 [Contribuir](CONTRIBUTING.md)**
 
+## 🆕 WiFi-Tester (Nueva Implementación)
+
+**¡Nueva implementación completa con FastAPI y SPA moderna!**
+
+La rama **WiFi-Tester** contiene una implementación completamente nueva con:
+- ✨ Backend FastAPI con WebSocket para actualizaciones en tiempo real
+- 🗺️ Interfaz SPA con mapas Leaflet y gráficos Apache ECharts
+- 💾 Persistencia con SQLite desde el inicio
+- 📊 Exportación CSV/JSON integrada
+- 🔄 Workflow punto por punto con pausa/continuar
+- 📱 Soporte completo para Termux/Android
+
+**[📖 Ver documentación completa de WiFi-Tester →](WIFI_TESTER_README.md)**
+
+Para usar WiFi-Tester:
+```bash
+git checkout WiFi-Tester
+cd backend
+bash start.sh --install
+```
+
+---
+
 ## 📋 Tabla de Contenidos
 
 - [Características](#-características)
