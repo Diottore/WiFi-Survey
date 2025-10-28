@@ -17,10 +17,13 @@
        CSS Variables - Centralized Design Tokens
        ============================================ */
     :root {
-      /* Colors - Main Palette */
+      /* Colors - Main Palette (Light Mode) */
       --bg: #f6f7fb;              /* Background color */
       --card: #fff;                /* Card background */
+      --text: #0f172a;             /* Text color */
+      --text-secondary: #334155;   /* Secondary text */
       --muted: #6b7280;            /* Muted text (WCAG AA compliant on white) */
+      --border: #e6e9ee;           /* Border color */
       --primary: #0b74ff;          /* Primary brand color */
       --primary-hover: #0960d9;    /* Primary hover state */
       --success: #10b981;          /* Success state */
@@ -43,6 +46,26 @@
       --shadow-md: 0 1px 6px rgba(2, 6, 23, 0.06);
       --shadow-lg: 0 4px 12px rgba(2, 6, 23, 0.08);
     }
+
+    /* Dark Mode Theme */
+    [data-theme="dark"] {
+      --bg: #0f172a;               /* Dark background */
+      --card: #1e293b;             /* Dark card background */
+      --text: #f1f5f9;             /* Light text */
+      --text-secondary: #cbd5e1;   /* Secondary light text */
+      --muted: #94a3b8;            /* Muted text in dark mode */
+      --border: #334155;           /* Dark border */
+      --primary: #3b82f6;          /* Adjusted primary for dark mode */
+      --primary-hover: #2563eb;    /* Adjusted hover */
+      --success: #22c55e;          /* Adjusted success */
+      --danger: #f87171;           /* Adjusted danger */
+      --warning: #fbbf24;          /* Adjusted warning */
+      
+      /* Shadows for dark mode */
+      --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+      --shadow-md: 0 1px 6px rgba(0, 0, 0, 0.4);
+      --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.5);
+    }
     /* ============================================
        Base Styles
        ============================================ */
@@ -54,10 +77,11 @@
       font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial; 
       margin: 0; 
       background: var(--bg); 
-      color: #0f172a;
+      color: var(--text);
       line-height: 1.5;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
+      transition: background var(--transition-normal), color var(--transition-normal);
     }
     
     .container { 
@@ -78,9 +102,10 @@
       align-items: center; 
       gap: 12px; 
       padding: 12px 16px; 
-      background: linear-gradient(90deg, #fff, #fbfdff); 
-      border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
       box-shadow: var(--shadow-sm);
+      transition: background var(--transition-normal), border-color var(--transition-normal);
     }
     
     .brand { 
@@ -110,6 +135,31 @@
       flex-wrap: wrap; 
     }
     
+    /* Theme Toggle Button */
+    .theme-toggle {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+    }
+    
+    .theme-toggle:hover {
+      background: var(--bg);
+      border-color: var(--primary);
+    }
+    
+    .theme-toggle:focus {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
+    }
+    
     /* Status Indicator */
     .status { 
       width: 10px; 
@@ -136,8 +186,9 @@
       gap: 6px; 
       border-radius: 10px; 
       padding: 4px; 
-      background: #f8fafc; 
-      border: 1px solid #e5e7eb;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      transition: background var(--transition-normal), border-color var(--transition-normal);
     }
     
     .mode-btn { 
@@ -148,12 +199,12 @@
       background: transparent; 
       font-weight: 600;
       transition: all var(--transition-fast);
-      color: #64748b;
+      color: var(--muted);
     }
     
     .mode-btn:hover {
-      background: rgba(255, 255, 255, 0.6);
-      color: #334155;
+      background: var(--card);
+      color: var(--text-secondary);
     }
     
     .mode-btn:focus {
@@ -163,9 +214,9 @@
     
     .mode-btn.active { 
       background: var(--card); 
-      border-color: #e5e7eb; 
-      box-shadow: 0 2px 10px rgba(2, 6, 23, 0.08);
-      color: #0f172a;
+      border-color: var(--border);
+      box-shadow: var(--shadow-sm);
+      color: var(--text);
     }
 
     /* ============================================
@@ -198,7 +249,7 @@
       border-radius: 12px; 
       box-shadow: var(--shadow-md);
       margin-bottom: var(--gap);
-      transition: box-shadow var(--transition-normal);
+      transition: box-shadow var(--transition-normal), background var(--transition-normal);
     }
     
     .card:hover {
@@ -217,8 +268,9 @@
       width: 100%; 
       padding: 10px; 
       border-radius: 10px; 
-      border: 1px solid #e6e9ee; 
-      background: #fff;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
       font-size: 1rem;
       transition: all var(--transition-fast);
     }
@@ -240,7 +292,7 @@
       font-size: 0.875rem;
       font-weight: 500;
       margin-bottom: 4px;
-      color: #334155;
+      color: var(--text-secondary);
     }
     /* ============================================
        Buttons
@@ -248,8 +300,9 @@
     .btn { 
       padding: 9px 12px; 
       border-radius: 10px; 
-      border: 1px solid #ddd; 
-      background: #fff; 
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
       cursor: pointer; 
       font-weight: 600;
       font-size: 0.95rem;
@@ -292,14 +345,14 @@
     }
     
     .btn.outline { 
-      background: #fff; 
-      border-color: #cbd5e1;
-      color: #475569;
+      background: transparent;
+      border-color: var(--border);
+      color: var(--text-secondary);
     }
     
     .btn.outline:hover:not(:disabled) {
-      background: #f8fafc;
-      border-color: #94a3b8;
+      background: var(--bg);
+      border-color: var(--primary);
     }
     
     .btn.small {
@@ -372,10 +425,11 @@
     .progress-bar { 
       height: 12px; 
       width: 100%; 
-      background: #f1f5f9; 
+      background: var(--bg);
       border-radius: 8px; 
       overflow: hidden;
       position: relative;
+      border: 1px solid var(--border);
     }
     
     .progress-bar > .fill { 
@@ -389,7 +443,7 @@
     .live-stats { 
       margin-top: 8px; 
       font-size: 0.95rem; 
-      color: #111827; 
+      color: var(--text);
       text-align: center; 
       word-break: break-word;
     }
@@ -428,10 +482,11 @@
       position: sticky; 
       top: max(0px, env(safe-area-inset-top));
       z-index: 2; 
-      background: #fff;
+      background: var(--card);
       padding: 10px 0 10px;
-      border-bottom: 1px solid #f1f5f9;
+      border-bottom: 1px solid var(--border);
       margin: 0 0 8px 0;
+      transition: background var(--transition-normal), border-color var(--transition-normal);
     }
     
     .toolbar-flex { 
@@ -487,7 +542,7 @@
       display: flex; 
       gap: 12px; 
       padding: 8px 6px; 
-      border-bottom: 1px solid #f3f4f6; 
+      border-bottom: 1px solid var(--border);
       align-items: center; 
       word-break: break-word; 
       flex-wrap: wrap;
@@ -495,7 +550,7 @@
     }
     
     .result-item:hover {
-      background: #f8fafc;
+      background: var(--bg);
       border-radius: 8px;
     }
     
@@ -651,8 +706,8 @@
       left: 50%;
       transform: translateX(-50%) translateY(-4px);
       padding: 4px 8px;
-      background: #1e293b;
-      color: #fff;
+      background: var(--text);
+      color: var(--card);
       font-size: 0.75rem;
       border-radius: 4px;
       white-space: nowrap;
@@ -690,6 +745,35 @@
     .skip-link:focus {
       top: 0;
     }
+    
+    /* ============================================
+       Pagination Controls
+       ============================================ */
+    .pagination {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+    
+    .pagination-controls {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    
+    .pagination-info {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      padding: 0 8px;
+    }
+    
+    .pagination .btn.disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -704,6 +788,9 @@
         </div>
       </div>
       <div class="top-actions">
+        <button id="themeToggle" class="theme-toggle" aria-label="Cambiar tema" data-tooltip="Cambiar tema">
+          <span id="themeIcon">🌙</span>
+        </button>
         <div class="status online" role="status" aria-label="Estado del sistema: en línea" title="Sistema en línea"></div>
         <nav class="mode-switch" role="tablist" aria-label="Navegación principal">
           <button id="modeQuick" class="mode-btn active" role="tab" aria-selected="true" aria-controls="panel-quick">Quick</button>
