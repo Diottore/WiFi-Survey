@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # app.py — WiFi Survey Flask Application
-# Adds timeseries of samples per test (t, dl, ul, ping) for live and export.
+# Adds timeseries of samples per test (t, dl, ul, ping, stage) for live and export.
+# Each stage (ping, download, upload) tracks time independently, resetting to 0 at stage start.
 
 import os
 import csv
@@ -184,6 +185,13 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
     expected_pings = max(1, int(duration))
 
     def update_partial(dl=None, ul=None, ping_vals=None, progress=None, note=None, force_sample=False, stage=None):
+        """
+        Update partial results and track stage-specific timing.
+        
+        When stage changes (ping -> download -> upload), the elapsed time resets to 0
+        for that new stage. This allows the live chart to show each stage independently
+        with its own time axis (0 to duration seconds) rather than cumulative time.
+        """
         nonlocal stage_start_ts
         now = time.time()
         with tasks_lock:
