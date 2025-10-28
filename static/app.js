@@ -597,6 +597,46 @@
     }, { notMerge:false, lazyUpdate:true });
   }
   
+  function liveChartUpdateFromSamples(samples, currentStage){
+    // Update the live chart using the actual samples from the backend
+    // This provides accurate real-time visualization of test measurements
+    ensureLiveMiniChart();
+    if(!liveChart || !samples || !samples.length) return;
+    
+    // Get the current stage from the latest sample or use provided stage
+    const latestStage = samples[samples.length - 1]?.stage || currentStage;
+    
+    // If stage changed, reset the chart to show only the current stage
+    if(latestStage && latestStage !== window.lastLiveStage) {
+      window.lastLiveStage = latestStage;
+      liveSamples = []; // Clear samples when stage changes
+    }
+    
+    // Use backend samples directly instead of creating synthetic ones
+    liveSamples = samples.map(s => ({
+      t: s.t ?? 0,
+      dl: s.dl ?? null,
+      ul: s.ul ?? null,
+      ping: s.ping ?? null,
+      stage: s.stage || latestStage
+    }));
+    
+    // Limit to 600 most recent samples to prevent memory issues
+    if(liveSamples.length > 600) {
+      liveSamples = liveSamples.slice(-600);
+    }
+    
+    const xs = liveSamples.map(s=> s.t);
+    liveChart.setOption({
+      xAxis:{ data: xs },
+      series:[
+        { name:'DL', data: liveSamples.map(s=> s.dl ?? null) },
+        { name:'UL', data: liveSamples.map(s=> s.ul ?? null) },
+        { name:'Ping', data: liveSamples.map(s=> s.ping ?? null) }
+      ]
+    }, { notMerge:false, lazyUpdate:true });
+  }
+  
   function liveChartReset(){
     liveSamples = [];
     currentStage = null;
@@ -836,7 +876,16 @@
 
     // Mostrar panel y actualizar mini gráfica
     if(liveVisuals && !liveVisuals.classList.contains('show')) { liveVisuals.classList.add('show'); ensureLiveMiniChart(); }
-    liveChartPush(elapsed, dl, ul, pingAvg, stage);
+    
+    // Use actual backend samples if available for accurate real-time visualization
+    // This ensures the chart displays all actual measurements, not synthetic interpolated values
+    const samples = dataContainer.samples;
+    if(samples && samples.length > 0) {
+      liveChartUpdateFromSamples(samples, stage);
+    } else {
+      // Fallback: create single sample from aggregated partial data if backend samples not available
+      liveChartPush(elapsed, dl, ul, pingAvg, stage);
+    }
 
     // Lecturas instantáneas
     instDlEl && (instDlEl.textContent = `${dl.toFixed(2)} Mbps`);
