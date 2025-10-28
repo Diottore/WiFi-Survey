@@ -499,6 +499,7 @@ def run_point():
                 "logs": [],
                 "results": [],
                 "partial": {},
+                "samples": [],
                 "seq": 0
             }
         
@@ -551,6 +552,7 @@ def start_survey():
                 "logs": [],
                 "results": [],
                 "partial": {},
+                "samples": [],
                 "seq": 0,
                 "cancel": False,
                 "waiting": False,
@@ -595,24 +597,6 @@ def start_survey():
                             tasks[p_id]["logs"].append("Survey cancelled")
                             tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
                             return
-                    if manual:
-                        with tasks_lock:
-                            tasks[p_id]["waiting"] = True
-                            tasks[p_id]["logs"].append(f"Waiting at point {pt}")
-                            tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
-                        while True:
-                            time.sleep(0.5)
-                            with tasks_lock:
-                                if tasks[p_id].get("cancel"):
-                                    tasks[p_id]["status"] = "cancelled"
-                                    tasks[p_id]["logs"].append("Survey cancelled during wait")
-                                    tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
-                                    return
-                                if tasks[p_id].get("proceed"):
-                                    tasks[p_id]["proceed"] = False
-                                    tasks[p_id]["waiting"] = False
-                                    tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
-                                    break
                     child_id = str(uuid.uuid4())
                     with tasks_lock:
                         tasks[child_id] = {"status":"queued", "total":1, "done":0, "logs":[], "results": [], "partial": {}, "seq": 0, "samples": []}
@@ -644,9 +628,30 @@ def start_survey():
                             tasks[p_id]["done"] += 1
                             tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
                             tasks[p_id]["logs"].append(f"Point done: {pt} ({tasks[p_id]['done']}/{tasks[p_id]['total']})")
-                        # Clear partial data after point is done so it doesn't persist to next point
+                        # Clear partial data and samples after point is done so they don't persist to next point
                         tasks[p_id]["partial"] = {}
+                        tasks[p_id]["samples"] = []
                         tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
+                    
+                    # Wait AFTER measurement completes if in manual mode
+                    if manual:
+                        with tasks_lock:
+                            tasks[p_id]["waiting"] = True
+                            tasks[p_id]["logs"].append(f"Measurement complete for {pt}. Move to next location and click proceed.")
+                            tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
+                        while True:
+                            time.sleep(0.5)
+                            with tasks_lock:
+                                if tasks[p_id].get("cancel"):
+                                    tasks[p_id]["status"] = "cancelled"
+                                    tasks[p_id]["logs"].append("Survey cancelled during wait")
+                                    tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
+                                    return
+                                if tasks[p_id].get("proceed"):
+                                    tasks[p_id]["proceed"] = False
+                                    tasks[p_id]["waiting"] = False
+                                    tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
+                                    break
             with tasks_lock:
                 tasks[p_id]["status"] = "finished"
                 tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
@@ -708,7 +713,14 @@ def stream_task(task_id):
                 seq = t.get("seq", 0)
                 if seq != last_seq:
                     last_seq = seq
-                    data = {"status": t.get("status"), "partial": t.get("partial"), "logs": t.get("logs")[-20:], "done": t.get("done"), "total": t.get("total")}
+                    data = {
+                        "status": t.get("status"), 
+                        "partial": t.get("partial"), 
+                        "samples": t.get("samples", []),
+                        "logs": t.get("logs")[-20:], 
+                        "done": t.get("done"), 
+                        "total": t.get("total")
+                    }
                     yield f"event: update\ndata: {json.dumps(data)}\n\n"
                 if t.get("status") in ("finished","error","cancelled"):
                     payload = t.get("result") if t.get("result") else t.get("results", [])
