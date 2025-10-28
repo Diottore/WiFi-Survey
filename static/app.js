@@ -597,22 +597,24 @@
     }, { notMerge:false, lazyUpdate:true });
   }
   
-  function liveChartUpdateFromSamples(samples, currentStage){
+  function liveChartUpdateFromSamples(samples, stageParam){
     // Update the live chart using the actual samples from the backend
     // This provides accurate real-time visualization of test measurements
     ensureLiveMiniChart();
     if(!liveChart || !samples || !samples.length) return;
     
     // Get the current stage from the latest sample or use provided stage
-    const latestStage = samples[samples.length - 1]?.stage || currentStage;
+    const latestStage = samples[samples.length - 1]?.stage || stageParam;
     
     // If stage changed, reset the chart to show only the current stage
-    if(latestStage && latestStage !== window.lastLiveStage) {
-      window.lastLiveStage = latestStage;
+    // This is consistent with liveChartPush() behavior
+    if(latestStage && latestStage !== currentStage) {
+      currentStage = latestStage;
       liveSamples = []; // Clear samples when stage changes
     }
     
-    // Use backend samples directly instead of creating synthetic ones
+    // Backend sends all accumulated samples for the current stage,
+    // not incremental updates, so we replace the entire array
     liveSamples = samples.map(s => ({
       t: s.t ?? 0,
       dl: s.dl ?? null,
