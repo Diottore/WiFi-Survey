@@ -54,31 +54,6 @@ python3 app.py
 2. Ve a: `http://127.0.0.1:5000`
 3. ¡Comienza a medir!
 
-## 💻 Para Usuarios de Docker (Servidor)
-
-### Opción 1: Docker Compose (Recomendado)
-
-```bash
-git clone https://github.com/Diottore/WiFi-Survey.git
-cd WiFi-Survey
-cp config.ini config.local.ini
-# Edita config.local.ini si es necesario
-docker-compose up -d
-```
-
-La aplicación estará en `http://localhost:5000`
-
-### Opción 2: Docker Simple
-
-```bash
-# Servidor iperf3
-docker run -d -p 5201:5201 --name iperf3-server networkstatic/iperf3 -s
-
-# Aplicación WiFi Survey
-docker build -t wifi-survey .
-docker run -d -p 5000:5000 --name wifi-survey wifi-survey
-```
-
 ## 🔧 Solución de Problemas Rápida
 
 ### Error: "No module named 'flask'"

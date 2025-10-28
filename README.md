@@ -178,27 +178,6 @@ make run               # Inicia la aplicación
 make clean             # Limpia archivos generados
 ```
 
-### Usando Docker (Servidor)
-
-Para ejecutar el servidor iperf3 y la aplicación web en contenedores:
-
-```bash
-# 1. Copia y edita la configuración
-cp config.ini config.local.ini
-# Edita config.local.ini con tus ajustes
-
-# 2. Inicia los servicios
-docker-compose up -d
-
-# 3. Ver logs
-docker-compose logs -f
-
-# 4. Detener servicios
-docker-compose down
-```
-
-La aplicación estará disponible en `http://<IP-del-servidor>:5000`
-
 ## 🎨 Funcionalidades de la UI
 
 ### 🔹 Run Point
