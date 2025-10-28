@@ -5,6 +5,17 @@
 
 (() => {
   const $ = id => document.getElementById(id);
+  
+  // Quality thresholds for visual indicators
+  const QUALITY_THRESHOLDS = {
+    DL_EXCELLENT: 50,  // Mbps - Green indicator
+    DL_GOOD: 20,       // Mbps - Yellow indicator (below is red)
+    PING_EXCELLENT: 30, // ms - Green indicator
+    PING_GOOD: 60       // ms - Yellow indicator (above is red)
+  };
+  
+  // UI Configuration
+  const MAX_SURVEY_LOGS = 30; // Maximum number of log entries to display
 
   // ===== Theme Management =====
   function initTheme() {
@@ -492,19 +503,44 @@
       const card = document.createElement('div');
       card.className = 'result-item';
       card.style.animation = 'fadeIn 0.3s ease';
+      
+      // Add quality indicators based on metrics
+      const dlQuality = r.iperf_dl_mbps ? 
+        (r.iperf_dl_mbps > QUALITY_THRESHOLDS.DL_EXCELLENT ? '🟢' : 
+         r.iperf_dl_mbps > QUALITY_THRESHOLDS.DL_GOOD ? '🟡' : '🔴') : '⚪';
+      const pingQuality = r.ping_avg ? 
+        (r.ping_avg < QUALITY_THRESHOLDS.PING_EXCELLENT ? '🟢' : 
+         r.ping_avg < QUALITY_THRESHOLDS.PING_GOOD ? '🟡' : '🔴') : '⚪';
+      
       card.innerHTML = `
-        <div style="flex:1; min-width:140px;">
-          <strong>${escapeHtml(r.point)}</strong>
-          <div class="muted">${escapeHtml(r.ssid)}</div>
+        <div style="flex:1; min-width:160px;">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px;">
+            <strong style="font-size:1rem;">${escapeHtml(r.point)}</strong>
+            <span style="font-size:0.7rem;">${dlQuality}${pingQuality}</span>
+          </div>
+          <div class="muted" style="font-size:0.85rem;">${escapeHtml(r.ssid || 'Sin SSID')}</div>
+          <div class="muted" style="font-size:0.75rem;">${new Date(r.timestamp).toLocaleString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</div>
         </div>
-        <div style="width:120px;text-align:right">${r.iperf_dl_mbps!=null? Number(r.iperf_dl_mbps).toFixed(2):'—'} Mbps</div>
-        <div style="width:120px;text-align:right">${r.iperf_ul_mbps!=null? Number(r.iperf_ul_mbps).toFixed(2):'—'}</div>
-        <div style="width:80px;text-align:right">${r.ping_avg!=null? r.ping_avg.toFixed(2):'—'} ms</div>
-        <div style="width:80px;text-align:right">${r.ping_jitter!=null? r.ping_jitter.toFixed(2):'—'} ms</div>
-        <div style="width:100px;text-align:center">
-          <button class="btn small view-samples-btn" data-index="${globalIndex}" style="padding:4px 8px;font-size:.85rem;">Ver gráfica</button>
+        <div style="min-width:100px;">
+          <div class="muted" style="font-size:0.75rem;">Download</div>
+          <div style="font-weight:600; color:var(--primary);">${r.iperf_dl_mbps!=null? Number(r.iperf_dl_mbps).toFixed(2):'—'} <span style="font-size:0.85rem;">Mbps</span></div>
         </div>
-        <div style="width:60px;text-align:center"><a class="muted" href="/raw/${escapeHtml((r.raw_file||'').split('/').pop())}" target="_blank">raw</a></div>
+        <div style="min-width:100px;">
+          <div class="muted" style="font-size:0.75rem;">Upload</div>
+          <div style="font-weight:600; color:var(--info);">${r.iperf_ul_mbps!=null? Number(r.iperf_ul_mbps).toFixed(2):'—'} <span style="font-size:0.85rem;">Mbps</span></div>
+        </div>
+        <div style="min-width:90px;">
+          <div class="muted" style="font-size:0.75rem;">Ping</div>
+          <div style="font-weight:600; color:var(--danger);">${r.ping_avg!=null? r.ping_avg.toFixed(2):'—'} <span style="font-size:0.85rem;">ms</span></div>
+        </div>
+        <div style="min-width:90px;">
+          <div class="muted" style="font-size:0.75rem;">Jitter</div>
+          <div style="font-weight:600;">${r.ping_jitter!=null? r.ping_jitter.toFixed(2):'—'} <span style="font-size:0.85rem;">ms</span></div>
+        </div>
+        <div style="min-width:120px;text-align:center; display:flex; gap:6px; flex-wrap:wrap;">
+          <button class="btn small view-samples-btn" data-index="${globalIndex}" style="padding:4px 10px;font-size:.85rem;">📊 Gráfica</button>
+          <a class="btn small outline" href="/raw/${escapeHtml((r.raw_file||'').split('/').pop())}" target="_blank" style="padding:4px 10px;font-size:.85rem;">📄 Raw</a>
+        </div>
       `;
       resultsList.appendChild(card);
       
@@ -582,6 +618,26 @@
     if(stage && stage !== currentStage) {
       currentStage = stage;
       liveSamples = []; // Clear samples when stage changes
+      
+      // Update stage label in the UI
+      const stageLabel = $('currentStageLabel');
+      const stageNames = { 
+        ping: '📡 Ping', 
+        download: '⬇️ Descarga', 
+        upload: '⬆️ Subida',
+        unknown: '—'
+      };
+      if(stageLabel) {
+        stageLabel.textContent = stageNames[stage] || stage;
+        // Add color coding for stages using CSS variables
+        const stageColors = {
+          ping: 'var(--danger)',      // Red for ping
+          download: 'var(--primary)', // Blue for download  
+          upload: 'var(--info)'       // Cyan for upload
+        };
+        stageLabel.style.color = stageColors[stage] || 'var(--muted)';
+        stageLabel.style.fontWeight = '600';
+      }
     }
     
     liveSamples.push({t, dl, ul, ping, stage});
@@ -600,6 +656,12 @@
   function liveChartReset(){
     liveSamples = [];
     currentStage = null;
+    const stageLabel = $('currentStageLabel');
+    if(stageLabel) {
+      stageLabel.textContent = '—';
+      stageLabel.style.color = 'var(--muted)';
+      stageLabel.style.fontWeight = 'normal';
+    }
     if(liveChart){
       liveChart.setOption({
         xAxis:{data:[]},
@@ -860,6 +922,37 @@
     const stageNames = { ping: 'Ping', download: 'Download', upload: 'Upload' };
     const stageName = stageNames[stage] || stage;
     liveSummary && (liveSummary.textContent = `Ejecutando ${stageName}... ${progress}%`);
+    
+    // Update survey logs if available
+    if(dataContainer.logs && Array.isArray(dataContainer.logs) && surveyLog) {
+      const recentLogs = dataContainer.logs.slice(-MAX_SURVEY_LOGS); // Last N logs
+      surveyLog.textContent = recentLogs.join('\n');
+      // Auto-scroll to bottom
+      surveyLog.scrollTop = surveyLog.scrollHeight;
+    }
+    
+    // Update survey progress info
+    if(dataContainer.done !== undefined && dataContainer.total !== undefined) {
+      const surveyStatus = $('surveyStatus');
+      if(surveyStatus) {
+        surveyStatus.textContent = `Progreso: ${dataContainer.done}/${dataContainer.total} puntos`;
+      }
+      const progressBar = $('progressBar');
+      const progressPctSmall = $('progressPctSmall');
+      if(progressBar && dataContainer.total > 0) {
+        const surveyProgress = (dataContainer.done / dataContainer.total) * 100;
+        progressBar.value = surveyProgress;
+        if(progressPctSmall) progressPctSmall.textContent = `${Math.round(surveyProgress)}%`;
+      }
+    }
+    
+    // Show/hide proceed button based on waiting state
+    if(dataContainer.waiting !== undefined) {
+      const proceedBtn = $('proceedBtn');
+      if(proceedBtn) {
+        proceedBtn.hidden = !dataContainer.waiting;
+      }
+    }
   }
 
   function handleFinalResult(res){
