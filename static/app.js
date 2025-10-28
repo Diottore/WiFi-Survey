@@ -1,7 +1,7 @@
 // static/app.js v13 — Migración a Apache ECharts (live + resultados).
 // Mantiene SSE/polling, filtros, exportaciones y layout mobile-first.
-// Stage tracking: Live chart resets time for each stage (ping/download/upload)
-// showing 0-duration for each stage independently.
+// Stage tracking: Live chart resets time for each stage (ping/download/upload),
+// displaying each stage's own timeline from 0 to configured duration seconds.
 
 (() => {
   const $ = id => document.getElementById(id);

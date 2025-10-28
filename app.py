@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # app.py — WiFi Survey Flask Application
-# Adds timeseries of samples per test (t, dl, ul, ping, stage) for live and export.
+# Enhanced timeseries with stage tracking (t, dl, ul, ping, stage) for live display and export.
 # Each stage (ping, download, upload) tracks time independently, resetting to 0 at stage start.
 
 import os
