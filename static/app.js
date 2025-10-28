@@ -4,6 +4,51 @@
 (() => {
   const $ = id => document.getElementById(id);
 
+  // ===== Theme Management =====
+  function initTheme() {
+    const themeToggle = $('themeToggle');
+    const themeIcon = $('themeIcon');
+    const html = document.documentElement;
+    
+    // Load saved theme or detect system preference
+    const savedTheme = localStorage.getItem('theme');
+    const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const initialTheme = savedTheme || (systemPrefersDark ? 'dark' : 'light');
+    
+    function setTheme(theme) {
+      html.setAttribute('data-theme', theme);
+      themeIcon.textContent = theme === 'dark' ? '☀️' : '🌙';
+      localStorage.setItem('theme', theme);
+      
+      // Update charts if they exist
+      if (typeof updateChartsTheme === 'function') {
+        updateChartsTheme(theme);
+      }
+    }
+    
+    // Set initial theme
+    setTheme(initialTheme);
+    
+    // Toggle theme on button click
+    if (themeToggle) {
+      themeToggle.addEventListener('click', () => {
+        const currentTheme = html.getAttribute('data-theme');
+        const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+        setTheme(newTheme);
+      });
+    }
+    
+    // Listen for system theme changes
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+      if (!localStorage.getItem('theme')) {
+        setTheme(e.matches ? 'dark' : 'light');
+      }
+    });
+  }
+  
+  // Initialize theme on page load
+  initTheme();
+
   // Panels / Mode
   const panelQuick = $('panel-quick'), panelSurvey = $('panel-survey'), panelResults = $('panel-results');
   const modeQuickBtn = $('modeQuick'), modeSurveyBtn = $('modeSurvey'), modeResultsBtn = $('modeResults');
@@ -117,6 +162,160 @@
     }
   });
 
+  // ===== Utility Functions =====
+  // HTML escape function to prevent XSS
+  function escapeHtml(text) {
+    if (text == null) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+  
+  // Debounce function for performance optimization
+  function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
+  }
+
+  // Smooth scroll to element
+  function smoothScrollTo(element) {
+    if (element) {
+      element.scrollIntoView({ 
+        behavior: 'smooth', 
+        block: 'start',
+        inline: 'nearest'
+      });
+    }
+  }
+
+  // Enable smooth scrolling globally
+  document.documentElement.style.scrollBehavior = 'smooth';
+
+  // ===== Toast Notifications =====
+  function showToast(message, type = 'info', duration = 3000) {
+    const container = $('toastContainer');
+    if (!container) return;
+    
+    const toast = document.createElement('div');
+    toast.className = `toast ${type} fade-in-up`;
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
+    
+    const icons = {
+      success: '✅',
+      error: '❌',
+      warning: '⚠️',
+      info: 'ℹ️'
+    };
+    
+    toast.innerHTML = `
+      <span style="font-size: 1.2rem;" aria-hidden="true">${icons[type] || icons.info}</span>
+      <span style="flex: 1;">${message}</span>
+    `;
+    
+    container.appendChild(toast);
+    
+    // Auto remove after duration
+    const removeToast = () => {
+      toast.style.animation = 'slideInRight 0.3s ease reverse';
+      setTimeout(() => toast.remove(), 300);
+    };
+    
+    const timeoutId = setTimeout(removeToast, duration);
+    
+    // Click to dismiss
+    toast.addEventListener('click', () => {
+      clearTimeout(timeoutId);
+      removeToast();
+    });
+    
+    // Limit number of toasts
+    const toasts = container.querySelectorAll('.toast');
+    if (toasts.length > 5) {
+      toasts[0].click();
+    }
+  }
+
+  // ===== Keyboard Shortcuts =====
+  const shortcutsBackdrop = $('shortcutsBackdrop');
+  const shortcutsHelp = document.querySelector('.shortcuts-help');
+  const helpToggle = $('helpToggle');
+  const closeShortcuts = $('closeShortcuts');
+  
+  function showShortcutsHelp() {
+    if (shortcutsBackdrop) {
+      shortcutsBackdrop.classList.add('show');
+      shortcutsHelp?.classList.add('show');
+    }
+  }
+  
+  function hideShortcutsHelp() {
+    if (shortcutsBackdrop) {
+      shortcutsBackdrop.classList.remove('show');
+      shortcutsHelp?.classList.remove('show');
+    }
+  }
+  
+  helpToggle?.addEventListener('click', showShortcutsHelp);
+  closeShortcuts?.addEventListener('click', hideShortcutsHelp);
+  shortcutsBackdrop?.addEventListener('click', (e) => {
+    if (e.target === shortcutsBackdrop) {
+      hideShortcutsHelp();
+    }
+  });
+  
+  document.addEventListener('keydown', (e) => {
+    // Ignore if user is typing in an input
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+      return;
+    }
+    
+    // ?: Show shortcuts help
+    if (e.key === '?') {
+      e.preventDefault();
+      showShortcutsHelp();
+      return;
+    }
+    
+    // Ctrl/Cmd + K: Focus search
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault();
+      searchInput?.focus();
+    }
+    
+    // Ctrl/Cmd + D: Toggle dark mode
+    if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+      e.preventDefault();
+      $('themeToggle')?.click();
+    }
+    
+    // Tab navigation: 1, 2, 3
+    if (e.key >= '1' && e.key <= '3' && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      const tabMap = { '1': modeQuickBtn, '2': modeSurveyBtn, '3': modeResultsBtn };
+      tabMap[e.key]?.click();
+    }
+    
+    // Escape: Close modals, clear search
+    if (e.key === 'Escape') {
+      const modal = $('rawModal');
+      if (shortcutsBackdrop && shortcutsBackdrop.classList.contains('show')) {
+        hideShortcutsHelp();
+      } else if (modal && !modal.hidden) {
+        modal.hidden = true;
+      } else if (searchInput && searchInput.value) {
+        searchInput.value = '';
+        searchInput.dispatchEvent(new Event('input'));
+      }
+    }
+  });
+
 
   // Live UI
   const liveVisuals = $('liveVisuals');
@@ -153,11 +352,113 @@
 
   // Estado
   let results = [];
+  let currentPage = 1;
+  const RESULTS_PER_PAGE = 20;
+
+  // Pagination controls
+  function renderPagination() {
+    const filteredResults = getFilteredSortedResults();
+    const totalPages = Math.ceil(filteredResults.length / RESULTS_PER_PAGE);
+    
+    let paginationEl = $('pagination');
+    if (!paginationEl) {
+      paginationEl = document.createElement('div');
+      paginationEl.id = 'pagination';
+      paginationEl.className = 'pagination';
+      paginationEl.setAttribute('role', 'navigation');
+      paginationEl.setAttribute('aria-label', 'Paginación de resultados');
+      
+      const resultsContent = resultsList?.parentElement;
+      if (resultsContent) {
+        resultsContent.appendChild(paginationEl);
+      }
+    }
+    
+    if (totalPages <= 1) {
+      paginationEl.innerHTML = '';
+      return;
+    }
+    
+    let html = '<div class="pagination-controls">';
+    
+    // Previous button
+    html += `<button class="btn small ${currentPage === 1 ? 'disabled' : ''}" 
+             onclick="window.goToPage(${currentPage - 1})" 
+             ${currentPage === 1 ? 'disabled' : ''}
+             aria-label="Página anterior">‹ Anterior</button>`;
+    
+    // Page numbers
+    html += `<span class="pagination-info" aria-live="polite">Página ${currentPage} de ${totalPages}</span>`;
+    
+    // Next button
+    html += `<button class="btn small ${currentPage === totalPages ? 'disabled' : ''}" 
+             onclick="window.goToPage(${currentPage + 1})" 
+             ${currentPage === totalPages ? 'disabled' : ''}
+             aria-label="Página siguiente">Siguiente ›</button>`;
+    
+    html += '</div>';
+    paginationEl.innerHTML = html;
+  }
+
+  // Navigate to specific page
+  window.goToPage = function(page) {
+    const filteredResults = getFilteredSortedResults();
+    const totalPages = Math.ceil(filteredResults.length / RESULTS_PER_PAGE);
+    
+    if (page < 1 || page > totalPages) return;
+    currentPage = page;
+    renderResultsList();
+    smoothScrollTo(resultsList);
+  };
+
+  // Render results list with pagination
+  function renderResultsList() {
+    if (!resultsList) return;
+    
+    const filteredResults = getFilteredSortedResults();
+    const startIndex = (currentPage - 1) * RESULTS_PER_PAGE;
+    const endIndex = startIndex + RESULTS_PER_PAGE;
+    const pageResults = filteredResults.slice(startIndex, endIndex);
+    
+    resultsList.innerHTML = '';
+    
+    pageResults.forEach((r, idx) => {
+      const globalIndex = results.indexOf(r);
+      const card = document.createElement('div');
+      card.className = 'result-item';
+      card.style.animation = 'fadeIn 0.3s ease';
+      card.innerHTML = `
+        <div style="flex:1; min-width:140px;">
+          <strong>${escapeHtml(r.point)}</strong>
+          <div class="muted">${escapeHtml(r.ssid)}</div>
+        </div>
+        <div style="width:120px;text-align:right">${r.iperf_dl_mbps!=null? Number(r.iperf_dl_mbps).toFixed(2):'—'} Mbps</div>
+        <div style="width:120px;text-align:right">${r.iperf_ul_mbps!=null? Number(r.iperf_ul_mbps).toFixed(2):'—'}</div>
+        <div style="width:80px;text-align:right">${r.ping_avg!=null? r.ping_avg.toFixed(2):'—'} ms</div>
+        <div style="width:80px;text-align:right">${r.ping_jitter!=null? r.ping_jitter.toFixed(2):'—'} ms</div>
+        <div style="width:100px;text-align:center">
+          <button class="btn small view-samples-btn" data-index="${globalIndex}" style="padding:4px 8px;font-size:.85rem;">Ver gráfica</button>
+        </div>
+        <div style="width:60px;text-align:center"><a class="muted" href="/raw/${escapeHtml((r.raw_file||'').split('/').pop())}" target="_blank">raw</a></div>
+      `;
+      resultsList.appendChild(card);
+      
+      // Add event listener to view samples button
+      const viewBtn = card.querySelector('.view-samples-btn');
+      if (viewBtn) {
+        viewBtn.addEventListener('click', () => showResultSamples(globalIndex));
+      }
+    });
+    
+    if (emptyState) emptyState.style.display = filteredResults.length ? 'none' : 'block';
+    renderPagination();
+    refreshResultsLayout();
+  }
   let lastSurveyTaskId = null;
   let currentSse = null;
 
   // ===== Utils =====
-  function debounce(fn, ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
+  // Removed duplicate debounce - using the one defined earlier
   function download(name,text,mime='text/plain'){ const blob=new Blob([text],{type:mime}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); URL.revokeObjectURL(a.href); }
   function toCsvRow(cells){ return cells.map(c=>{ if(c==null) return ''; const s=String(c); return /[",\n]/.test(s)? `"${s.replace(/"/g,'""')}"` : s; }).join(','); }
   function groupBy(arr,key){ const m=new Map(); arr.forEach(it=>{ const k=it[key]||''; if(!m.has(k)) m.set(k,[]); m.get(k).push(it); }); return m; }
@@ -347,9 +648,20 @@
   toggleDL && toggleDL.addEventListener('change', ()=> { applyLegendSelectionFromToggles(); });
   toggleUL && toggleUL.addEventListener('change', ()=> { applyLegendSelectionFromToggles(); });
   togglePing && togglePing.addEventListener('change', ()=> { applyLegendSelectionFromToggles(); });
-  searchInput && searchInput.addEventListener('input', debounce(()=> rebuildResultsChart(), 200));
-  sortResultsSelect && sortResultsSelect.addEventListener('change', rebuildResultsChart);
-  refreshChartBtn && refreshChartBtn.addEventListener('click', rebuildResultsChart);
+  searchInput && searchInput.addEventListener('input', debounce(()=> { 
+    currentPage = 1; 
+    rebuildResultsChart(); 
+    renderResultsList();
+  }, 200));
+  sortResultsSelect && sortResultsSelect.addEventListener('change', () => {
+    currentPage = 1;
+    rebuildResultsChart();
+    renderResultsList();
+  });
+  refreshChartBtn && refreshChartBtn.addEventListener('click', () => {
+    rebuildResultsChart();
+    renderResultsList();
+  });
 
   // ======================
   // SSE / Polling
@@ -503,39 +815,19 @@
   }
 
   function pushResultToList(r){
-    results.unshift(r); if(results.length>500) results.pop();
-    const card=document.createElement('div'); card.className='result-item';
-    card.innerHTML = `
-      <div style="flex:1; min-width:140px;">
-        <strong>${(r.point ?? '')}</strong>
-        <div class="muted">${(r.ssid ?? '')}</div>
-      </div>
-      <div style="width:120px;text-align:right">${r.iperf_dl_mbps!=null? Number(r.iperf_dl_mbps).toFixed(2):'—'} Mbps</div>
-      <div style="width:120px;text-align:right">${r.iperf_ul_mbps!=null? Number(r.iperf_ul_mbps).toFixed(2):'—'}</div>
-      <div style="width:80px;text-align:right">${r.ping_avg!=null? r.ping_avg.toFixed(2):'—'} ms</div>
-      <div style="width:80px;text-align:right">${r.ping_jitter!=null? r.ping_jitter.toFixed(2):'—'} ms</div>
-      <div style="width:100px;text-align:center">
-        <button class="btn small view-samples-btn" data-index="${results.length-1}" style="padding:4px 8px;font-size:.85rem;">Ver gráfica</button>
-      </div>
-      <div style="width:60px;text-align:center"><a class="muted" href="/raw/${(r.raw_file||'').split('/').pop()}" target="_blank">raw</a></div>
-    `;
-    if(resultsList) resultsList.prepend(card);
+    results.unshift(r); 
+    if(results.length>500) results.pop();
     
-    // Add event listener to view samples button
-    const viewBtn = card.querySelector('.view-samples-btn');
-    if(viewBtn){
-      viewBtn.addEventListener('click', ()=> showResultSamples(results.length-1-parseInt(viewBtn.getAttribute('data-index'))));
-    }
-    
-    if(emptyState) emptyState.style.display = results.length ? 'none' : 'block';
-    refreshResultsLayout();
+    // Reset to first page when new result is added
+    currentPage = 1;
+    renderResultsList();
   }
   
   // Modal para ver muestras de un resultado individual
   function showResultSamples(index){
     const r = results[index];
     if(!r || !r.samples || !r.samples.length){
-      alert('No hay datos de muestras disponibles para este resultado');
+      showToast('No hay datos de muestras disponibles para este resultado', 'warning');
       return;
     }
     
@@ -894,7 +1186,11 @@
   clearResultsBtn?.addEventListener('click', ()=> {
     if(!confirm('¿Estás seguro de limpiar todos los resultados?')) return;
     
-    results=[]; resultsList && (resultsList.innerHTML='');
+    results=[]; 
+    currentPage = 1;
+    resultsList && (resultsList.innerHTML='');
+    const paginationEl = $('pagination');
+    if (paginationEl) paginationEl.innerHTML = '';
     if(resultsChart){ resultsChart.setOption({ xAxis:{data:[]}, series:[{data:[]},{data:[]},{data:[]}] }, {notMerge:true}); }
     updateSummary(); emptyState && (emptyState.style.display='block');
   });

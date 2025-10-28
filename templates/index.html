@@ -17,10 +17,13 @@
        CSS Variables - Centralized Design Tokens
        ============================================ */
     :root {
-      /* Colors - Main Palette */
+      /* Colors - Main Palette (Light Mode) */
       --bg: #f6f7fb;              /* Background color */
       --card: #fff;                /* Card background */
+      --text: #0f172a;             /* Text color */
+      --text-secondary: #334155;   /* Secondary text */
       --muted: #6b7280;            /* Muted text (WCAG AA compliant on white) */
+      --border: #e6e9ee;           /* Border color */
       --primary: #0b74ff;          /* Primary brand color */
       --primary-hover: #0960d9;    /* Primary hover state */
       --success: #10b981;          /* Success state */
@@ -43,6 +46,26 @@
       --shadow-md: 0 1px 6px rgba(2, 6, 23, 0.06);
       --shadow-lg: 0 4px 12px rgba(2, 6, 23, 0.08);
     }
+
+    /* Dark Mode Theme */
+    [data-theme="dark"] {
+      --bg: #0f172a;               /* Dark background */
+      --card: #1e293b;             /* Dark card background */
+      --text: #f1f5f9;             /* Light text */
+      --text-secondary: #cbd5e1;   /* Secondary light text */
+      --muted: #94a3b8;            /* Muted text in dark mode */
+      --border: #334155;           /* Dark border */
+      --primary: #3b82f6;          /* Adjusted primary for dark mode */
+      --primary-hover: #2563eb;    /* Adjusted hover */
+      --success: #22c55e;          /* Adjusted success */
+      --danger: #f87171;           /* Adjusted danger */
+      --warning: #fbbf24;          /* Adjusted warning */
+      
+      /* Shadows for dark mode */
+      --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+      --shadow-md: 0 1px 6px rgba(0, 0, 0, 0.4);
+      --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.5);
+    }
     /* ============================================
        Base Styles
        ============================================ */
@@ -50,14 +73,22 @@
       box-sizing: border-box;
     }
     
+    html {
+      /* Fix for mobile viewport height */
+      height: -webkit-fill-available;
+    }
+    
     body { 
       font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial; 
       margin: 0; 
       background: var(--bg); 
-      color: #0f172a;
+      color: var(--text);
       line-height: 1.5;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
+      transition: background var(--transition-normal), color var(--transition-normal);
+      min-height: 100vh;
+      min-height: -webkit-fill-available;
     }
     
     .container { 
@@ -78,9 +109,10 @@
       align-items: center; 
       gap: 12px; 
       padding: 12px 16px; 
-      background: linear-gradient(90deg, #fff, #fbfdff); 
-      border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
       box-shadow: var(--shadow-sm);
+      transition: background var(--transition-normal), border-color var(--transition-normal);
     }
     
     .brand { 
@@ -110,6 +142,31 @@
       flex-wrap: wrap; 
     }
     
+    /* Theme Toggle Button */
+    .theme-toggle {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+    }
+    
+    .theme-toggle:hover {
+      background: var(--bg);
+      border-color: var(--primary);
+    }
+    
+    .theme-toggle:focus {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
+    }
+    
     /* Status Indicator */
     .status { 
       width: 10px; 
@@ -136,8 +193,9 @@
       gap: 6px; 
       border-radius: 10px; 
       padding: 4px; 
-      background: #f8fafc; 
-      border: 1px solid #e5e7eb;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      transition: background var(--transition-normal), border-color var(--transition-normal);
     }
     
     .mode-btn { 
@@ -148,12 +206,12 @@
       background: transparent; 
       font-weight: 600;
       transition: all var(--transition-fast);
-      color: #64748b;
+      color: var(--muted);
     }
     
     .mode-btn:hover {
-      background: rgba(255, 255, 255, 0.6);
-      color: #334155;
+      background: var(--card);
+      color: var(--text-secondary);
     }
     
     .mode-btn:focus {
@@ -163,9 +221,9 @@
     
     .mode-btn.active { 
       background: var(--card); 
-      border-color: #e5e7eb; 
-      box-shadow: 0 2px 10px rgba(2, 6, 23, 0.08);
-      color: #0f172a;
+      border-color: var(--border);
+      box-shadow: var(--shadow-sm);
+      color: var(--text);
     }
 
     /* ============================================
@@ -198,7 +256,7 @@
       border-radius: 12px; 
       box-shadow: var(--shadow-md);
       margin-bottom: var(--gap);
-      transition: box-shadow var(--transition-normal);
+      transition: box-shadow var(--transition-normal), background var(--transition-normal);
     }
     
     .card:hover {
@@ -217,8 +275,9 @@
       width: 100%; 
       padding: 10px; 
       border-radius: 10px; 
-      border: 1px solid #e6e9ee; 
-      background: #fff;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
       font-size: 1rem;
       transition: all var(--transition-fast);
     }
@@ -240,7 +299,7 @@
       font-size: 0.875rem;
       font-weight: 500;
       margin-bottom: 4px;
-      color: #334155;
+      color: var(--text-secondary);
     }
     /* ============================================
        Buttons
@@ -248,8 +307,9 @@
     .btn { 
       padding: 9px 12px; 
       border-radius: 10px; 
-      border: 1px solid #ddd; 
-      background: #fff; 
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
       cursor: pointer; 
       font-weight: 600;
       font-size: 0.95rem;
@@ -292,14 +352,14 @@
     }
     
     .btn.outline { 
-      background: #fff; 
-      border-color: #cbd5e1;
-      color: #475569;
+      background: transparent;
+      border-color: var(--border);
+      color: var(--text-secondary);
     }
     
     .btn.outline:hover:not(:disabled) {
-      background: #f8fafc;
-      border-color: #94a3b8;
+      background: var(--bg);
+      border-color: var(--primary);
     }
     
     .btn.small {
@@ -372,10 +432,11 @@
     .progress-bar { 
       height: 12px; 
       width: 100%; 
-      background: #f1f5f9; 
+      background: var(--bg);
       border-radius: 8px; 
       overflow: hidden;
       position: relative;
+      border: 1px solid var(--border);
     }
     
     .progress-bar > .fill { 
@@ -389,7 +450,7 @@
     .live-stats { 
       margin-top: 8px; 
       font-size: 0.95rem; 
-      color: #111827; 
+      color: var(--text);
       text-align: center; 
       word-break: break-word;
     }
@@ -428,10 +489,11 @@
       position: sticky; 
       top: max(0px, env(safe-area-inset-top));
       z-index: 2; 
-      background: #fff;
+      background: var(--card);
       padding: 10px 0 10px;
-      border-bottom: 1px solid #f1f5f9;
+      border-bottom: 1px solid var(--border);
       margin: 0 0 8px 0;
+      transition: background var(--transition-normal), border-color var(--transition-normal);
     }
     
     .toolbar-flex { 
@@ -487,7 +549,7 @@
       display: flex; 
       gap: 12px; 
       padding: 8px 6px; 
-      border-bottom: 1px solid #f3f4f6; 
+      border-bottom: 1px solid var(--border);
       align-items: center; 
       word-break: break-word; 
       flex-wrap: wrap;
@@ -495,7 +557,7 @@
     }
     
     .result-item:hover {
-      background: #f8fafc;
+      background: var(--bg);
       border-radius: 8px;
     }
     
@@ -651,8 +713,8 @@
       left: 50%;
       transform: translateX(-50%) translateY(-4px);
       padding: 4px 8px;
-      background: #1e293b;
-      color: #fff;
+      background: var(--text);
+      color: var(--card);
       font-size: 0.75rem;
       border-radius: 4px;
       white-space: nowrap;
@@ -670,7 +732,24 @@
     /* ============================================
        Focus Visible (improved keyboard navigation)
        ============================================ */
+    /* Remove default focus outline for mouse users */
+    *:focus:not(:focus-visible) {
+      outline: none;
+    }
+    
+    /* Enhanced focus for keyboard users */
     *:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+    
+    /* Better focus for interactive elements */
+    button:focus-visible,
+    a:focus-visible,
+    input:focus-visible,
+    textarea:focus-visible,
+    select:focus-visible {
       outline: 2px solid var(--primary);
       outline-offset: 2px;
     }
@@ -682,13 +761,304 @@
       left: 0;
       background: var(--primary);
       color: white;
-      padding: 8px;
+      padding: 8px 16px;
       text-decoration: none;
       z-index: 100;
+      border-radius: 0 0 4px 0;
+      font-weight: 600;
     }
     
     .skip-link:focus {
       top: 0;
+    }
+    
+    /* ============================================
+       Pagination Controls
+       ============================================ */
+    .pagination {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+    
+    .pagination-controls {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    
+    .pagination-info {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      padding: 0 8px;
+    }
+    
+    .pagination .btn.disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    
+    /* ============================================
+       Keyboard Shortcuts Help
+       ============================================ */
+    .shortcuts-help {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: var(--card);
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      z-index: 1000;
+      max-width: 400px;
+      width: 90%;
+      display: none;
+    }
+    
+    .shortcuts-help.show {
+      display: block;
+      animation: fadeIn 0.2s ease;
+    }
+    
+    .shortcuts-help h3 {
+      margin-top: 0;
+      margin-bottom: 16px;
+      color: var(--text);
+    }
+    
+    .shortcut-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    
+    .shortcut-item:last-child {
+      border-bottom: none;
+    }
+    
+    .shortcut-key {
+      background: var(--bg);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 0.9rem;
+      border: 1px solid var(--border);
+    }
+    
+    .modal-backdrop {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 999;
+      display: none;
+    }
+    
+    .modal-backdrop.show {
+      display: block;
+    }
+    
+    /* ============================================
+       Loading States & Animations
+       ============================================ */
+    .loading-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(var(--bg), 0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      border-radius: inherit;
+    }
+    
+    .loading-spinner {
+      width: 40px;
+      height: 40px;
+      border: 4px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    
+    /* Skeleton loading for list items */
+    .skeleton {
+      background: linear-gradient(
+        90deg,
+        var(--bg) 25%,
+        var(--border) 50%,
+        var(--bg) 75%
+      );
+      background-size: 200% 100%;
+      animation: skeleton-loading 1.5s ease-in-out infinite;
+      border-radius: 8px;
+    }
+    
+    @keyframes skeleton-loading {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    
+    /* Fade in animation for new elements */
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    .fade-in-up {
+      animation: fadeInUp 0.3s ease;
+    }
+    
+    /* Pulse animation for notifications */
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+    
+    .pulse {
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    
+    /* ============================================
+       Toast Notifications
+       ============================================ */
+    .toast-container {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 1001;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+    
+    .toast {
+      background: var(--card);
+      padding: 12px 16px;
+      border-radius: 8px;
+      box-shadow: var(--shadow-lg);
+      border-left: 4px solid var(--primary);
+      min-width: 250px;
+      max-width: 400px;
+      pointer-events: auto;
+      animation: slideInRight 0.3s ease;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .toast.success {
+      border-left-color: var(--success);
+    }
+    
+    .toast.error {
+      border-left-color: var(--danger);
+    }
+    
+    .toast.warning {
+      border-left-color: var(--warning);
+    }
+    
+    @keyframes slideInRight {
+      from {
+        transform: translateX(100%);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+    
+    @media (max-width: 680px) {
+      .toast-container {
+        left: 12px;
+        right: 12px;
+        bottom: 12px;
+      }
+      
+      .toast {
+        min-width: auto;
+        width: 100%;
+      }
+    }
+    
+    /* ============================================
+       Reduced Motion Support
+       ============================================ */
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+    
+    /* ============================================
+       Print Styles
+       ============================================ */
+    @media print {
+      .topbar,
+      .theme-toggle,
+      .mode-switch,
+      button,
+      .skip-link {
+        display: none !important;
+      }
+      
+      body {
+        background: white;
+        color: black;
+      }
+      
+      .card {
+        box-shadow: none;
+        border: 1px solid #ddd;
+        page-break-inside: avoid;
+      }
+    }
+    
+    /* ============================================
+       Compact Mode
+       ============================================ */
+    .compact-mode .result-item {
+      padding: 4px 6px;
+      font-size: 0.85rem;
+      gap: 8px;
+    }
+    
+    .compact-mode .result-item > div {
+      min-width: auto !important;
+    }
+    
+    .compact-mode .card {
+      padding: 10px;
+    }
+    
+    .compact-mode h2,
+    .compact-mode h3 {
+      font-size: 1rem;
+      margin-bottom: 4px;
     }
   </style>
 </head>
@@ -704,6 +1074,12 @@
         </div>
       </div>
       <div class="top-actions">
+        <button id="themeToggle" class="theme-toggle" aria-label="Cambiar tema" data-tooltip="Cambiar tema">
+          <span id="themeIcon">🌙</span>
+        </button>
+        <button id="helpToggle" class="theme-toggle" aria-label="Ver atajos de teclado" data-tooltip="Atajos (?)">
+          <span>❓</span>
+        </button>
         <div class="status online" role="status" aria-label="Estado del sistema: en línea" title="Sistema en línea"></div>
         <nav class="mode-switch" role="tablist" aria-label="Navegación principal">
           <button id="modeQuick" class="mode-btn active" role="tab" aria-selected="true" aria-controls="panel-quick">Quick</button>
@@ -900,6 +1276,46 @@
         <pre id="rawContent" class="log"></pre>
       </div>
     </div>
+    
+    <div id="shortcutsBackdrop" class="modal-backdrop">
+      <div class="shortcuts-help">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 16px;">
+          <h3>Atajos de teclado</h3>
+          <button id="closeShortcuts" class="btn small">✕</button>
+        </div>
+        <div class="shortcut-item">
+          <span>Cambiar tema</span>
+          <span class="shortcut-key">Ctrl/⌘ + D</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Buscar resultados</span>
+          <span class="shortcut-key">Ctrl/⌘ + K</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Ir a Quick</span>
+          <span class="shortcut-key">1</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Ir a Encuesta</span>
+          <span class="shortcut-key">2</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Ir a Resultados</span>
+          <span class="shortcut-key">3</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Cerrar modal / Limpiar búsqueda</span>
+          <span class="shortcut-key">Esc</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Ver atajos</span>
+          <span class="shortcut-key">?</span>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Toast Notifications Container -->
+    <div id="toastContainer" class="toast-container"></div>
   </div>
 </body>
 </html>
