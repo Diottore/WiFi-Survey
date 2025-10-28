@@ -163,6 +163,14 @@
   });
 
   // ===== Utility Functions =====
+  // HTML escape function to prevent XSS
+  function escapeHtml(text) {
+    if (text == null) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+  
   // Debounce function for performance optimization
   function debounce(func, wait) {
     let timeout;
@@ -196,7 +204,9 @@
     if (!container) return;
     
     const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
+    toast.className = `toast ${type} fade-in-up`;
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
     
     const icons = {
       success: '✅',
@@ -206,23 +216,31 @@
     };
     
     toast.innerHTML = `
-      <span style="font-size: 1.2rem;">${icons[type] || icons.info}</span>
+      <span style="font-size: 1.2rem;" aria-hidden="true">${icons[type] || icons.info}</span>
       <span style="flex: 1;">${message}</span>
     `;
     
     container.appendChild(toast);
     
     // Auto remove after duration
-    setTimeout(() => {
+    const removeToast = () => {
       toast.style.animation = 'slideInRight 0.3s ease reverse';
       setTimeout(() => toast.remove(), 300);
-    }, duration);
+    };
+    
+    const timeoutId = setTimeout(removeToast, duration);
     
     // Click to dismiss
     toast.addEventListener('click', () => {
-      toast.style.animation = 'slideInRight 0.3s ease reverse';
-      setTimeout(() => toast.remove(), 300);
+      clearTimeout(timeoutId);
+      removeToast();
     });
+    
+    // Limit number of toasts
+    const toasts = container.querySelectorAll('.toast');
+    if (toasts.length > 5) {
+      toasts[0].click();
+    }
   }
 
   // ===== Keyboard Shortcuts =====
@@ -287,7 +305,7 @@
     // Escape: Close modals, clear search
     if (e.key === 'Escape') {
       const modal = $('rawModal');
-      if (shortcutsBackdrop && !shortcutsBackdrop.classList.contains('show') === false) {
+      if (shortcutsBackdrop && shortcutsBackdrop.classList.contains('show')) {
         hideShortcutsHelp();
       } else if (modal && !modal.hidden) {
         modal.hidden = true;
@@ -411,8 +429,8 @@
       card.style.animation = 'fadeIn 0.3s ease';
       card.innerHTML = `
         <div style="flex:1; min-width:140px;">
-          <strong>${(r.point ?? '')}</strong>
-          <div class="muted">${(r.ssid ?? '')}</div>
+          <strong>${escapeHtml(r.point)}</strong>
+          <div class="muted">${escapeHtml(r.ssid)}</div>
         </div>
         <div style="width:120px;text-align:right">${r.iperf_dl_mbps!=null? Number(r.iperf_dl_mbps).toFixed(2):'—'} Mbps</div>
         <div style="width:120px;text-align:right">${r.iperf_ul_mbps!=null? Number(r.iperf_ul_mbps).toFixed(2):'—'}</div>
@@ -421,7 +439,7 @@
         <div style="width:100px;text-align:center">
           <button class="btn small view-samples-btn" data-index="${globalIndex}" style="padding:4px 8px;font-size:.85rem;">Ver gráfica</button>
         </div>
-        <div style="width:60px;text-align:center"><a class="muted" href="/raw/${(r.raw_file||'').split('/').pop()}" target="_blank">raw</a></div>
+        <div style="width:60px;text-align:center"><a class="muted" href="/raw/${escapeHtml((r.raw_file||'').split('/').pop())}" target="_blank">raw</a></div>
       `;
       resultsList.appendChild(card);
       
@@ -440,7 +458,7 @@
   let currentSse = null;
 
   // ===== Utils =====
-  function debounce(fn, ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
+  // Removed duplicate debounce - using the one defined earlier
   function download(name,text,mime='text/plain'){ const blob=new Blob([text],{type:mime}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); URL.revokeObjectURL(a.href); }
   function toCsvRow(cells){ return cells.map(c=>{ if(c==null) return ''; const s=String(c); return /[",\n]/.test(s)? `"${s.replace(/"/g,'""')}"` : s; }).join(','); }
   function groupBy(arr,key){ const m=new Map(); arr.forEach(it=>{ const k=it[key]||''; if(!m.has(k)) m.set(k,[]); m.get(k).push(it); }); return m; }
