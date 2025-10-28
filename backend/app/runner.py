@@ -5,7 +5,7 @@ Executes ping, iperf3, and RSSI measurements.
 import asyncio
 import subprocess
 import logging
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any, Callable, Tuple
 from datetime import datetime
 import shutil
 
@@ -25,7 +25,7 @@ class CommandRunner:
     """Helper class to run external commands"""
     
     @staticmethod
-    async def run_command(cmd: list, timeout: int = 30, check_stderr: bool = False) -> tuple[int, str, str]:
+    async def run_command(cmd: list, timeout: int = 30, check_stderr: bool = False) -> Tuple[int, str, str]:
         """
         Run a command asynchronously.
         
