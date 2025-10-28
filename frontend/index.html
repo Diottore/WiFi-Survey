@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WiFi-Tester</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>WiFi-Tester</h1>
+            <p>Sistema de medición y mapeo de cobertura WiFi</p>
+        </header>
+
+        <div class="content">
+            <!-- Configuration Panel -->
+            <section class="panel">
+                <h2>Configuración de Prueba</h2>
+                <form id="testForm">
+                    <div class="form-group">
+                        <label for="targetHost">Host Destino:</label>
+                        <input type="text" id="targetHost" name="targetHost" required
+                               placeholder="192.168.1.1" value="192.168.1.1">
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="iperfMode">Modo iperf3:</label>
+                            <select id="iperfMode" name="iperfMode">
+                                <option value="tcp" selected>TCP</option>
+                                <option value="udp">UDP</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="iperfDuration">Duración (s):</label>
+                            <input type="number" id="iperfDuration" name="iperfDuration" 
+                                   min="5" max="60" value="10" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="repetitions">Repeticiones:</label>
+                            <input type="number" id="repetitions" name="repetitions" 
+                                   min="1" max="10" value="3" required>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Puntos de Medición:</label>
+                        <div id="pointsList" class="points-list">
+                            <div class="point-item">
+                                <input type="text" placeholder="ID (ej: P1)" class="point-id" value="P1">
+                                <input type="number" placeholder="Latitud" class="point-lat" step="0.000001" value="40.7128">
+                                <input type="number" placeholder="Longitud" class="point-lng" step="0.000001" value="-74.0060">
+                                <button type="button" class="btn-remove" onclick="removePoint(this)">×</button>
+                            </div>
+                        </div>
+                        <button type="button" class="btn-secondary" onclick="addPoint()">+ Agregar Punto</button>
+                    </div>
+
+                    <div class="button-group">
+                        <button type="submit" class="btn-primary" id="startBtn">Iniciar Prueba</button>
+                        <button type="button" class="btn-danger" id="stopBtn" disabled>Detener Prueba</button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- Status Panel -->
+            <section class="panel">
+                <h2>Estado</h2>
+                <div id="statusPanel">
+                    <p>No hay pruebas en ejecución</p>
+                </div>
+                <div id="currentPoint" style="display: none;">
+                    <h3>Punto Actual</h3>
+                    <p id="currentPointInfo"></p>
+                    <button id="continueBtn" class="btn-primary" style="display: none;">
+                        Continuar al Siguiente Punto
+                    </button>
+                </div>
+            </section>
+
+            <!-- Map -->
+            <section class="panel">
+                <h2>Mapa de Cobertura</h2>
+                <div id="map" style="height: 400px;"></div>
+            </section>
+
+            <!-- Charts -->
+            <section class="panel">
+                <h2>Gráficas en Tiempo Real</h2>
+                <div class="charts-grid">
+                    <div id="rssiChart" class="chart"></div>
+                    <div id="throughputChart" class="chart"></div>
+                    <div id="latencyChart" class="chart"></div>
+                    <div id="packetLossChart" class="chart"></div>
+                </div>
+            </section>
+
+            <!-- Export -->
+            <section class="panel">
+                <h2>Exportar Datos</h2>
+                <div id="exportPanel">
+                    <input type="number" id="exportJobId" placeholder="Job ID" style="width: 150px; margin-right: 10px;">
+                    <button class="btn-secondary" onclick="exportData('csv')">Exportar CSV</button>
+                    <button class="btn-secondary" onclick="exportData('json')">Exportar JSON</button>
+                </div>
+            </section>
+
+            <!-- Logs -->
+            <section class="panel">
+                <h2>Logs</h2>
+                <div id="logs" class="logs"></div>
+            </section>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
