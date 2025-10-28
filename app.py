@@ -15,6 +15,7 @@ import logging
 import configparser
 import copy
 from datetime import datetime
+from typing import Dict, Any, Tuple, Optional, List
 from flask import Flask, request, jsonify, send_file, render_template, abort, Response
 from flask_cors import CORS
 from validation import Validator, ValidationError
@@ -31,17 +32,17 @@ MAX_LINES_PER_SECOND = 10  # Maximum expected lines per second for ping output
 MAX_OUTPUT_LINES = 1000     # Maximum lines to process from iperf3 output
 
 # Load configuration
-def load_config():
+def load_config() -> configparser.ConfigParser:
     """Load configuration from config.local.ini or config.ini"""
     config = configparser.ConfigParser()
     config_files = ['config.local.ini', 'config.ini']
-    
+
     for config_file in config_files:
         if os.path.exists(config_file):
             logger.info(f"Loading configuration from {config_file}")
             config.read(config_file)
             return config
-    
+
     logger.warning("No configuration file found, using defaults")
     # Return default config
     config['server'] = {
@@ -98,11 +99,11 @@ if not os.path.exists(CSV_FILE):
 tasks = {}
 tasks_lock = threading.Lock()
 
-def run_cmd(cmd, timeout=300, retries=0):
+def run_cmd(cmd: str, timeout: int = 300, retries: int = 0) -> Tuple[str, str, int]:
     """Run command with optional retry logic"""
     attempt = 0
     max_attempts = retries + 1
-    
+
     while attempt < max_attempts:
         try:
             r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
@@ -119,7 +120,7 @@ def run_cmd(cmd, timeout=300, retries=0):
                 return "", str(e), -1
             logger.warning(f"Command error: {e}, retry {attempt}/{retries}")
             time.sleep(1)
-    
+
     return "", "max retries exceeded", -1
 
 def parse_ping_time(line):
@@ -144,7 +145,25 @@ def _percentile(values, p):
         return arr[int(k)]
     return arr[f] * (c-k) + arr[c] * (k-f)
 
-def worker_run_point(task_id, device, point, run_index, duration, parallel):
+def worker_run_point(
+    task_id: str,
+    device: str,
+    point: str,
+    run_index: int,
+    duration: int,
+    parallel: int
+) -> None:
+    """
+    Execute a single point measurement in a background thread.
+
+    Args:
+        task_id: Unique identifier for this task
+        device: Device name
+        point: Point identifier
+        run_index: Run number/index
+        duration: Test duration in seconds
+        parallel: Number of parallel iperf3 streams
+    """
     with tasks_lock:
         tasks[task_id] = tasks.get(task_id, {})
         tasks[task_id]["status"] = "running"

@@ -1,0 +1,21 @@
+# WiFi Survey - Development Dependencies
+# Install with: pip install -r requirements-dev.txt
+
+# Include production dependencies
+-r requirements.txt
+
+# Linting and code quality
+pylint>=4.0.0,<5.0.0
+flake8>=7.0.0,<8.0.0
+black>=24.0.0,<25.0.0
+
+# Type checking
+mypy>=1.8.0,<2.0.0
+
+# Testing
+pytest>=8.0.0,<9.0.0
+pytest-cov>=4.0.0,<5.0.0
+pytest-mock>=3.0.0,<4.0.0
+
+# Pre-commit hooks
+pre-commit>=3.5.0,<4.0.0
