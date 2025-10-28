@@ -1080,8 +1080,7 @@
       quickStatusEl && (quickStatusEl.textContent = '✅ Prueba iniciada correctamente');
       quickStatusEl && (quickStatusEl.style.color = '#10b981');
       liveSummary && (liveSummary.textContent='Tarea iniciada, esperando actualizaciones...'); 
-      openSseForTask(j.task_id); 
-      setMode('results');
+      openSseForTask(j.task_id);
     }catch(e){ 
       if(e.name === 'AbortError'){
         quickStatusEl && (quickStatusEl.textContent = '❌ Timeout: El servidor no respondió a tiempo');
@@ -1182,7 +1181,7 @@
       if(liveVisuals && !liveVisuals.classList.contains('show')) { liveVisuals.classList.add('show'); ensureLiveMiniChart(); }
       surveyStatusMsgEl && (surveyStatusMsgEl.textContent = `✅ Encuesta iniciada con ${points.length} punto(s)`);
       surveyStatusMsgEl && (surveyStatusMsgEl.style.color = '#10b981');
-      openSseForTask(j.task_id); surveyArea && (surveyArea.hidden=false); setMode('results');
+      openSseForTask(j.task_id); surveyArea && (surveyArea.hidden=false);
     }catch(e){ 
       if(e.name === 'AbortError'){
         surveyStatusMsgEl && (surveyStatusMsgEl.textContent = '❌ Timeout: El servidor no respondió a tiempo');
