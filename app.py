@@ -123,18 +123,25 @@ def run_cmd(cmd, timeout=300, retries=0):
     return "", "max retries exceeded", -1
 
 def parse_ping_time(line):
+    """Parse ping time from ping output line."""
     m = re.search(r'time=([\d\.]+)', line)
     if m:
-        try: return float(m.group(1))
-        except: return None
+        try:
+            return float(m.group(1))
+        except (ValueError, TypeError):
+            return None
     return None
 
 def _percentile(values, p):
-    if not values: return None
+    """Calculate percentile value from a list of values."""
+    if not values:
+        return None
     arr = sorted(values)
     k = (len(arr)-1) * (p/100.0)
-    f = int(k); c = min(f+1, len(arr)-1)
-    if f == c: return arr[int(k)]
+    f = int(k)
+    c = min(f+1, len(arr)-1)
+    if f == c:
+        return arr[int(k)]
     return arr[f] * (c-k) + arr[c] * (k-f)
 
 def worker_run_point(task_id, device, point, run_index, duration, parallel):
@@ -180,7 +187,8 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
     try:
         wifi_out, _, _ = run_cmd("termux-wifi-connectioninfo", timeout=4)
         wifi_json = json.loads(wifi_out) if wifi_out else {}
-    except Exception:
+    except (json.JSONDecodeError, ValueError, OSError) as e:
+        logger.debug(f"Could not get WiFi info: {e}")
         wifi_json = {}
 
     expected_pings = max(1, int(duration))
@@ -213,7 +221,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
                 loss = None
                 try:
                     loss = max(0.0, min(100.0, round((1.0 - (len(times)/expected_pings))*100.0, 2)))
-                except:
+                except (ZeroDivisionError, ValueError, TypeError):
                     loss = None
                 partial["ping_avg_ms"] = avg
                 partial["ping_jitter_ms"] = jitter
@@ -282,7 +290,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
                 tasks[task_id]["logs"].append("ping timed out")
             try:
                 p.kill()
-            except:
+            except (OSError, ProcessLookupError):
                 pass
         except Exception as e:
             with tasks_lock:
@@ -307,7 +315,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
                 try:
                     val = float(m.group(1))
                     update_partial(dl=val)
-                except:
+                except (ValueError, TypeError):
                     pass
             if line:
                 with tasks_lock:
@@ -328,9 +336,9 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
             p.terminate()
             try:
                 p.wait(timeout=5)
-            except:
+            except subprocess.TimeoutExpired:
                 p.kill()
-        
+
         # Get final result with JSON
         dl_out, _, _ = run_cmd(f"iperf3 -c {SERVER_IP} -t 1 -P {int(parallel)} --json", timeout=10)
         try:
@@ -338,7 +346,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
             dl_bps = (j.get("end", {}).get("sum_received", {}).get("bits_per_second")
                       or j.get("end", {}).get("sum_sent", {}).get("bits_per_second") or 0)
             dl_mbps_final = round(dl_bps / 1_000_000, 2) if dl_bps else tasks[task_id]["partial"].get("dl_mbps", 0.0)
-        except:
+        except (json.JSONDecodeError, ValueError, TypeError, KeyError):
             dl_mbps_final = tasks[task_id]["partial"].get("dl_mbps", 0.0)
         update_partial(dl=dl_mbps_final, force_sample=True)
     except Exception as e:
@@ -361,7 +369,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
                 try:
                     val = float(m.group(1))
                     update_partial(ul=val)
-                except:
+                except (ValueError, TypeError):
                     pass
             if line:
                 with tasks_lock:
@@ -382,9 +390,9 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
             p.terminate()
             try:
                 p.wait(timeout=5)
-            except:
+            except subprocess.TimeoutExpired:
                 p.kill()
-        
+
         # Get final result with JSON
         ul_out, _, _ = run_cmd(f"iperf3 -c {SERVER_IP} -t 1 -P {int(parallel)} -R --json", timeout=10)
         try:
@@ -392,7 +400,7 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
             ul_bps = (j.get("end", {}).get("sum_received", {}).get("bits_per_second")
                       or j.get("end", {}).get("sum_sent", {}).get("bits_per_second") or 0)
             ul_mbps_final = round(ul_bps / 1_000_000, 2) if ul_bps else tasks[task_id]["partial"].get("ul_mbps", 0.0)
-        except:
+        except (json.JSONDecodeError, ValueError, TypeError, KeyError):
             ul_mbps_final = tasks[task_id]["partial"].get("ul_mbps", 0.0)
         update_partial(ul=ul_mbps_final, force_sample=True)
     except Exception as e:
@@ -786,12 +794,13 @@ def health_check():
         health["checks"]["termux_api_available"] = result.returncode == 0
     except Exception:
         health["checks"]["termux_api_available"] = False
-    
+
     # Overall status
     if not health["checks"].get("server_reachable") or not health["checks"].get("iperf3_available"):
         health["status"] = "degraded"
-    
+
     return jsonify(health)
+
 
 if __name__ == "__main__":
     logger.info(f"Starting WiFi Survey application on {FLASK_HOST}:{FLASK_PORT}")

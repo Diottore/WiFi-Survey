@@ -14,16 +14,16 @@ if [ ! -f "$OUTPUT_CSV" ]; then
   echo "device,point_id,timestamp,ssid,bssid,frequency_mhz,rssi_dbm,link_speed_mbps,iperf_dl_mbps,iperf_ul_mbps,ping_avg_ms,ping_jitter_ms,ping_loss_pct,test_duration_s,notes" > "$OUTPUT_CSV"
 fi
 
-read -p "Identificador del equipo bajo prueba (DUT) o nombre del teléfono que ejecuta la prueba (p.ej. AP-Lobby o S24FE): " DEVICE_NAME
+read -r -p "Identificador del equipo bajo prueba (DUT) o nombre del teléfono que ejecuta la prueba (p.ej. AP-Lobby o S24FE): " DEVICE_NAME
 echo "Introduce lista de puntos (separados por espacios), ejemplo: A1 A2 A3 B1 B2"
-read -p "Introduce lista de puntos: " -a POINTS
+read -r -p "Introduce lista de puntos: " -a POINTS
 
 termux-wake-lock
 echo "Wakelock activado. Asegúrate de que el Wi‑Fi está conectado al SSID objetivo."
 
 for POINT in "${POINTS[@]}"; do
   for RUN in $(seq 1 $REPEATS); do
-    read -p "Mover a punto $POINT (repetición $RUN/$REPEATS). Pulsa ENTER cuando estés listo..." tmp
+    read -r -p "Mover a punto $POINT (repetición $RUN/$REPEATS). Pulsa ENTER cuando estés listo..."
 
     TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     WIFI_JSON=$(termux-wifi-connectioninfo 2>/dev/null || echo "{}")
