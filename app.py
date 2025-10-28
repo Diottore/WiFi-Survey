@@ -143,14 +143,16 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
             "dl_mbps": 0.0, "ul_mbps": 0.0,
             "ping_avg_ms": None, "ping_jitter_ms": None,
             "ping_p50_ms": None, "ping_p95_ms": None, "ping_loss_pct": None,
-            "progress_pct": 0, "elapsed_s": 0
+            "progress_pct": 0, "elapsed_s": 0, "stage": "ping"
         }
         tasks[task_id]["seq"] = tasks[task_id].get("seq", 0) + 1
         tasks[task_id]["logs"] = tasks[task_id].get("logs", []) + [f"Task {task_id} started: {point} run:{run_index}"]
-        tasks[task_id]["samples"] = []  # timeseries t, dl, ul, ping
+        tasks[task_id]["samples"] = []  # timeseries t, dl, ul, ping, stage
         tasks[task_id]["_last_sample_ts"] = 0.0
+        tasks[task_id]["_stage_start_ts"] = 0.0
 
     start_ts = time.time()
+    stage_start_ts = start_ts
 
     # Verificar conectividad con el servidor antes de iniciar
     try:
@@ -181,7 +183,8 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
 
     expected_pings = max(1, int(duration))
 
-    def update_partial(dl=None, ul=None, ping_vals=None, progress=None, note=None, force_sample=False):
+    def update_partial(dl=None, ul=None, ping_vals=None, progress=None, note=None, force_sample=False, stage=None):
+        nonlocal stage_start_ts
         now = time.time()
         with tasks_lock:
             partial = tasks[task_id].setdefault("partial", {})
@@ -210,19 +213,32 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
                 partial["ping_loss_pct"] = loss
             if progress is not None:
                 partial["progress_pct"] = int(progress)
-            partial["elapsed_s"] = int(now - start_ts)
+            
+            # Update stage if provided
+            if stage is not None:
+                partial["stage"] = stage
+                tasks[task_id]["_stage_start_ts"] = now
+                stage_start_ts = now
+            
+            # Calculate elapsed time relative to current stage
+            current_stage_start = tasks[task_id].get("_stage_start_ts") or start_ts
+            stage_elapsed = int(now - current_stage_start)
+            partial["elapsed_s"] = stage_elapsed
+            
             if note:
                 tasks[task_id]["logs"].append(note)
 
             # Append sample (máx ~10 Hz): cada 0.1s o si force_sample
             last_s = tasks[task_id].get("_last_sample_ts") or 0.0
             if force_sample or (now - last_s >= 0.1):
-                t_s = round(now - start_ts, 2)
+                # Time relative to current stage
+                t_s = round(now - current_stage_start, 2)
                 sample = {
                     "t": t_s,
                     "dl": partial.get("dl_mbps"),
                     "ul": partial.get("ul_mbps"),
-                    "ping": partial.get("ping_avg_ms")
+                    "ping": partial.get("ping_avg_ms"),
+                    "stage": partial.get("stage", "unknown")
                 }
                 tasks[task_id]["samples"].append(sample)
                 tasks[task_id]["_last_sample_ts"] = now
@@ -232,6 +248,9 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
     ping_samples = []
     def ping_worker():
         try:
+            # Set stage to ping at the beginning
+            update_partial(stage="ping", note="Starting ping test", force_sample=True)
+            
             p = subprocess.Popen(["ping", "-c", str(int(duration)), SERVER_IP],
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             line_count = 0
@@ -266,6 +285,9 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
     # iperf3 DL
     dl_mbps_final = 0.0
     try:
+        # Set stage to download at the beginning
+        update_partial(stage="download", note="Starting download test", force_sample=True)
+        
         cmd_dl = f"iperf3 -c {SERVER_IP} -t {int(duration)} -P {int(parallel)}"
         p = subprocess.Popen(cmd_dl, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         line_count = 0
@@ -317,6 +339,9 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
     # iperf3 UL (reverse)
     ul_mbps_final = 0.0
     try:
+        # Set stage to upload at the beginning
+        update_partial(stage="upload", note="Starting upload test", force_sample=True)
+        
         cmd_ul = f"iperf3 -c {SERVER_IP} -t {int(duration)} -P {int(parallel)} -R"
         p = subprocess.Popen(cmd_ul, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         line_count = 0
