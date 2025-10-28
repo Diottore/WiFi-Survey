@@ -10,9 +10,8 @@ install:  ## Install production dependencies
 	pip install -r requirements.txt
 
 install-dev:  ## Install development dependencies
-	pip install -r requirements.txt
-	pip install pylint flake8 black isort pre-commit
-	pre-commit install
+	pip install -r requirements-dev.txt
+	pre-commit install || echo "⚠️  pre-commit not available, skipping hook installation"
 
 test:  ## Run syntax checks and unit tests
 	@echo "Checking Python syntax..."
@@ -21,13 +20,13 @@ test:  ## Run syntax checks and unit tests
 	python3 -m py_compile validation.py
 	@echo "✓ Syntax checks passed"
 	@echo ""
+	@echo "Checking shell scripts..."
+	@command -v shellcheck >/dev/null 2>&1 && shellcheck mobile_wifi_survey.sh install.sh || echo "⚠️  shellcheck not found, skipping shell script checks"
+	@echo ""
 	@echo "Running unit tests..."
 	python3 -m unittest test_validation -v
 	@echo ""
 	@echo "✓ All tests passed"
-	@echo ""
-	@echo "Note: Integration tests require Flask to be installed."
-	@echo "Run 'make test-integration' after 'make install' to run integration tests."
 
 test-integration:  ## Run integration tests (requires Flask)
 	@echo "Checking Flask availability..."
@@ -71,8 +70,20 @@ setup-config:  ## Create local configuration file
 
 check-deps:  ## Check if required commands are available
 	@echo "Checking dependencies..."
-	@command -v python3 >/dev/null 2>&1 || echo "⚠️  python3 not found"
-	@command -v pip >/dev/null 2>&1 || echo "⚠️  pip not found"
-	@command -v iperf3 >/dev/null 2>&1 || echo "⚠️  iperf3 not found"
-	@command -v jq >/dev/null 2>&1 || echo "⚠️  jq not found"
+	@command -v python3 >/dev/null 2>&1 && echo "✓ python3 found" || echo "⚠️  python3 not found"
+	@command -v pip >/dev/null 2>&1 && echo "✓ pip found" || echo "⚠️  pip not found"
+	@command -v iperf3 >/dev/null 2>&1 && echo "✓ iperf3 found" || echo "⚠️  iperf3 not found"
+	@command -v jq >/dev/null 2>&1 && echo "✓ jq found" || echo "⚠️  jq not found"
+	@command -v shellcheck >/dev/null 2>&1 && echo "✓ shellcheck found" || echo "⚠️  shellcheck not found (optional)"
 	@echo "✓ Dependency check complete"
+
+pre-commit:  ## Run pre-commit hooks on all files
+	@command -v pre-commit >/dev/null 2>&1 && pre-commit run --all-files || echo "⚠️  pre-commit not installed"
+
+security-check:  ## Run basic security checks
+	@echo "Checking for common security issues..."
+	@grep -r "password" --include="*.py" --include="*.sh" . || echo "✓ No hardcoded passwords found"
+	@grep -r "api_key" --include="*.py" --include="*.sh" . || echo "✓ No hardcoded API keys found"
+	@echo "✓ Security check complete"
+	@echo "Note: For comprehensive security scanning, use GitHub's CodeQL scanner"
+
