@@ -588,17 +588,20 @@
     .result-item { 
       display: flex; 
       gap: 12px; 
-      padding: 8px 6px; 
+      padding: 12px 10px; 
       border-bottom: 1px solid var(--border);
       align-items: center; 
       word-break: break-word; 
       flex-wrap: wrap;
-      transition: background var(--transition-fast);
+      transition: all var(--transition-fast);
+      border-radius: 8px;
+      margin-bottom: 4px;
     }
     
     .result-item:hover {
       background: var(--bg);
-      border-radius: 8px;
+      box-shadow: var(--shadow-sm);
+      transform: translateX(2px);
     }
     
     .summary-card { 
@@ -1250,7 +1253,10 @@
           </div>
 
           <div class="card chart-card">
-            <strong>Estabilidad (en vivo)</strong>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+              <strong>Estabilidad (en vivo)</strong>
+              <span id="currentStageLabel" class="muted" style="font-size:.85rem; padding:2px 8px; border-radius:4px; background:var(--bg);">—</span>
+            </div>
             <p class="muted" style="font-size:.85rem;margin-top:4px;">DL / UL / Ping durante esta prueba</p>
             <div id="liveMiniChartWrap">
               <div id="liveMiniChart" role="img" aria-label="Gráfica en vivo de métricas de red"></div>
