@@ -556,6 +556,32 @@ def start_survey():
                 "proceed": False
             }
         
+        # Helper function to propagate partial updates from child to parent
+        # Defined outside the loop to avoid closure issues
+        def make_propagate_partial_updates(parent_id):
+            """Factory function to create propagation worker for a child task"""
+            def propagate_partial_updates(child_id):
+                """Copy partial data from child task to parent task for live updates"""
+                try:
+                    while True:
+                        time.sleep(0.3)  # Update every 300ms
+                        with tasks_lock:
+                            child = tasks.get(child_id)
+                            if not child:
+                                break
+                            if child.get("status") in ("finished", "error", "cancelled"):
+                                break
+                            # Copy partial data from child to parent (deep copy)
+                            if child.get("partial"):
+                                tasks[parent_id]["partial"] = child["partial"].copy()
+                                tasks[parent_id]["seq"] = tasks[parent_id].get("seq", 0) + 1
+                            # Copy samples if available (deep copy to avoid concurrent modification)
+                            if child.get("samples"):
+                                tasks[parent_id]["samples"] = list(child["samples"])
+                except Exception as e:
+                    logger.error(f"Error in propagate_partial_updates: {e}")
+            return propagate_partial_updates
+        
         def survey_worker(p_id, device, points, repeats, manual):
             with tasks_lock:
                 tasks[p_id]["status"] = "running"
@@ -588,41 +614,27 @@ def start_survey():
                                     break
                     child_id = str(uuid.uuid4())
                     with tasks_lock:
-                        tasks[child_id] = {"status":"queued", "total":1, "done":0, "logs":[], "results": [], "partial": {}, "seq": 0}
+                        tasks[child_id] = {"status":"queued", "total":1, "done":0, "logs":[], "results": [], "partial": {}, "seq": 0, "samples": []}
                         # Log which point is starting
                         tasks[p_id]["logs"].append(f"Starting point {pt} (run {rep+1})")
                         tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
                     
-                    # Thread to propagate partial updates from child to parent during execution
-                    def propagate_partial_updates(parent_id, child_id):
-                        """Copy partial data from child task to parent task for live updates"""
-                        while True:
-                            time.sleep(0.3)  # Update every 300ms
-                            with tasks_lock:
-                                child = tasks.get(child_id)
-                                if not child:
-                                    break
-                                if child.get("status") in ("finished", "error", "cancelled"):
-                                    break
-                                # Copy partial data from child to parent
-                                if child.get("partial"):
-                                    tasks[p_id]["partial"] = child["partial"].copy()
-                                    tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
-                                # Copy samples if available
-                                if child.get("samples"):
-                                    tasks[p_id]["samples"] = child["samples"]
-                    
+                    # Create and start propagation thread
+                    propagate_func = make_propagate_partial_updates(p_id)
                     propagate_thread = threading.Thread(
-                        target=propagate_partial_updates,
-                        args=(p_id, child_id),
+                        target=propagate_func,
+                        args=(child_id,),
                         daemon=True
                     )
                     propagate_thread.start()
                     
+                    # Execute the point measurement
                     worker_run_point(child_id, device, pt, rep+1, IPERF_DURATION, IPERF_PARALLEL)
                     
-                    # Wait for propagation thread to finish
-                    propagate_thread.join(timeout=2)
+                    # Give the propagation thread time to finish (increased timeout to ensure completion)
+                    propagate_thread.join(timeout=5)
+                    if propagate_thread.is_alive():
+                        logger.warning(f"Propagation thread for {child_id} did not finish in time")
                     
                     with tasks_lock:
                         child_result = tasks[child_id].get("result")
