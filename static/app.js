@@ -753,8 +753,6 @@
       console.warn('Error updating charts theme:', e);
     }
   };
-    renderResultsList();
-  });
 
   // ======================
   // SSE / Polling
