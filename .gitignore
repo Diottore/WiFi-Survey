@@ -3,6 +3,12 @@ raw_results/
 wifi_survey_results.csv
 iperf_results.csv
 
+# Database files
+*.sqlite
+*.db
+db.sqlite
+backend/data/
+
 # Python
 *.pyc
 *.pyo
@@ -39,6 +45,7 @@ ENV/
 # Local configuration
 config.local.ini
 *.local.ini
+config.local.yaml
 
 # OS files
 Thumbs.db

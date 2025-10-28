@@ -1,0 +1,42 @@
+# WiFi-Tester Configuration
+# This file contains default settings for the WiFi testing application
+
+# Server configuration
+server:
+  host: "0.0.0.0"  # Server bind address (0.0.0.0 for all interfaces)
+  port: 8000       # Server port
+
+# Database configuration
+database:
+  url: "sqlite:///./db.sqlite"  # Database URL (SQLite by default)
+
+# iperf3 default settings
+iperf3:
+  default_duration: 10  # Default test duration in seconds
+  default_mode: "tcp"   # Default mode (tcp or udp)
+  udp_bandwidth: "100M" # Target bandwidth for UDP tests
+
+# Ping settings
+ping:
+  default_count: 10     # Number of ping packets per test
+  timeout: 30           # Ping command timeout in seconds
+
+# RSSI detection
+rssi:
+  detection_timeout: 5  # Timeout for RSSI detection commands
+  # Detection strategies are attempted in order:
+  # 1. termux-wifi-connectioninfo (Termux/Android)
+  # 2. dumpsys wifi (Android)
+  # 3. iw dev wlan0 link (Linux)
+  # 4. iwconfig wlan0 (Linux)
+
+# WebSocket settings
+websocket:
+  reconnect_interval: 3  # Seconds to wait before reconnecting
+
+# Testing limits
+limits:
+  max_points: 100       # Maximum number of test points
+  max_repetitions: 10   # Maximum repetitions per point
+  min_iperf_duration: 5 # Minimum iperf3 duration
+  max_iperf_duration: 60 # Maximum iperf3 duration
