@@ -527,11 +527,11 @@
         </div>
         <div style="min-width:100px;">
           <div class="muted" style="font-size:0.75rem;">Upload</div>
-          <div style="font-weight:600; color:#06b6d4;">${r.iperf_ul_mbps!=null? Number(r.iperf_ul_mbps).toFixed(2):'—'} <span style="font-size:0.85rem;">Mbps</span></div>
+          <div style="font-weight:600; color:var(--info);">${r.iperf_ul_mbps!=null? Number(r.iperf_ul_mbps).toFixed(2):'—'} <span style="font-size:0.85rem;">Mbps</span></div>
         </div>
         <div style="min-width:90px;">
           <div class="muted" style="font-size:0.75rem;">Ping</div>
-          <div style="font-weight:600; color:#ef4444;">${r.ping_avg!=null? r.ping_avg.toFixed(2):'—'} <span style="font-size:0.85rem;">ms</span></div>
+          <div style="font-weight:600; color:var(--danger);">${r.ping_avg!=null? r.ping_avg.toFixed(2):'—'} <span style="font-size:0.85rem;">ms</span></div>
         </div>
         <div style="min-width:90px;">
           <div class="muted" style="font-size:0.75rem;">Jitter</div>
@@ -633,7 +633,7 @@
         const stageColors = {
           ping: 'var(--danger)',      // Red for ping
           download: 'var(--primary)', // Blue for download  
-          upload: '#06b6d4'           // Cyan for upload
+          upload: 'var(--info)'       // Cyan for upload
         };
         stageLabel.style.color = stageColors[stage] || 'var(--muted)';
         stageLabel.style.fontWeight = '600';

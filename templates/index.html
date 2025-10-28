@@ -29,6 +29,7 @@
       --success: #10b981;          /* Success state */
       --danger: #ef4444;           /* Error/danger state */
       --warning: #f59e0b;          /* Warning state */
+      --info: #06b6d4;             /* Info/cyan state (upload indicator) */
       
       /* Spacing */
       --gap: 12px;                 /* Standard gap between elements */
@@ -60,6 +61,7 @@
       --success: #22c55e;          /* Adjusted success */
       --danger: #f87171;           /* Adjusted danger */
       --warning: #fbbf24;          /* Adjusted warning */
+      --info: #06b6d4;             /* Info/cyan state (same in dark mode) */
       
       /* Shadows for dark mode */
       --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
@@ -444,7 +446,7 @@
     
     .progress-bar > .fill { 
       height: 100%; 
-      background: linear-gradient(90deg, var(--primary), #06b6d4); 
+      background: linear-gradient(90deg, var(--primary), var(--info)); 
       width: 0%; 
       transition: width 200ms linear;
       border-radius: 8px;
