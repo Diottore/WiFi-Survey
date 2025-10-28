@@ -190,6 +190,114 @@
   // Enable smooth scrolling globally
   document.documentElement.style.scrollBehavior = 'smooth';
 
+  // ===== Toast Notifications =====
+  function showToast(message, type = 'info', duration = 3000) {
+    const container = $('toastContainer');
+    if (!container) return;
+    
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    
+    const icons = {
+      success: '✅',
+      error: '❌',
+      warning: '⚠️',
+      info: 'ℹ️'
+    };
+    
+    toast.innerHTML = `
+      <span style="font-size: 1.2rem;">${icons[type] || icons.info}</span>
+      <span style="flex: 1;">${message}</span>
+    `;
+    
+    container.appendChild(toast);
+    
+    // Auto remove after duration
+    setTimeout(() => {
+      toast.style.animation = 'slideInRight 0.3s ease reverse';
+      setTimeout(() => toast.remove(), 300);
+    }, duration);
+    
+    // Click to dismiss
+    toast.addEventListener('click', () => {
+      toast.style.animation = 'slideInRight 0.3s ease reverse';
+      setTimeout(() => toast.remove(), 300);
+    });
+  }
+
+  // ===== Keyboard Shortcuts =====
+  const shortcutsBackdrop = $('shortcutsBackdrop');
+  const shortcutsHelp = document.querySelector('.shortcuts-help');
+  const helpToggle = $('helpToggle');
+  const closeShortcuts = $('closeShortcuts');
+  
+  function showShortcutsHelp() {
+    if (shortcutsBackdrop) {
+      shortcutsBackdrop.classList.add('show');
+      shortcutsHelp?.classList.add('show');
+    }
+  }
+  
+  function hideShortcutsHelp() {
+    if (shortcutsBackdrop) {
+      shortcutsBackdrop.classList.remove('show');
+      shortcutsHelp?.classList.remove('show');
+    }
+  }
+  
+  helpToggle?.addEventListener('click', showShortcutsHelp);
+  closeShortcuts?.addEventListener('click', hideShortcutsHelp);
+  shortcutsBackdrop?.addEventListener('click', (e) => {
+    if (e.target === shortcutsBackdrop) {
+      hideShortcutsHelp();
+    }
+  });
+  
+  document.addEventListener('keydown', (e) => {
+    // Ignore if user is typing in an input
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+      return;
+    }
+    
+    // ?: Show shortcuts help
+    if (e.key === '?') {
+      e.preventDefault();
+      showShortcutsHelp();
+      return;
+    }
+    
+    // Ctrl/Cmd + K: Focus search
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault();
+      searchInput?.focus();
+    }
+    
+    // Ctrl/Cmd + D: Toggle dark mode
+    if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+      e.preventDefault();
+      $('themeToggle')?.click();
+    }
+    
+    // Tab navigation: 1, 2, 3
+    if (e.key >= '1' && e.key <= '3' && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      const tabMap = { '1': modeQuickBtn, '2': modeSurveyBtn, '3': modeResultsBtn };
+      tabMap[e.key]?.click();
+    }
+    
+    // Escape: Close modals, clear search
+    if (e.key === 'Escape') {
+      const modal = $('rawModal');
+      if (shortcutsBackdrop && !shortcutsBackdrop.classList.contains('show') === false) {
+        hideShortcutsHelp();
+      } else if (modal && !modal.hidden) {
+        modal.hidden = true;
+      } else if (searchInput && searchInput.value) {
+        searchInput.value = '';
+        searchInput.dispatchEvent(new Event('input'));
+      }
+    }
+  });
+
 
   // Live UI
   const liveVisuals = $('liveVisuals');
@@ -701,7 +809,7 @@
   function showResultSamples(index){
     const r = results[index];
     if(!r || !r.samples || !r.samples.length){
-      alert('No hay datos de muestras disponibles para este resultado');
+      showToast('No hay datos de muestras disponibles para este resultado', 'warning');
       return;
     }
     

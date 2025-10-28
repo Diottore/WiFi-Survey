@@ -774,6 +774,205 @@
       cursor: not-allowed;
       pointer-events: none;
     }
+    
+    /* ============================================
+       Keyboard Shortcuts Help
+       ============================================ */
+    .shortcuts-help {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: var(--card);
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      z-index: 1000;
+      max-width: 400px;
+      width: 90%;
+      display: none;
+    }
+    
+    .shortcuts-help.show {
+      display: block;
+      animation: fadeIn 0.2s ease;
+    }
+    
+    .shortcuts-help h3 {
+      margin-top: 0;
+      margin-bottom: 16px;
+      color: var(--text);
+    }
+    
+    .shortcut-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    
+    .shortcut-item:last-child {
+      border-bottom: none;
+    }
+    
+    .shortcut-key {
+      background: var(--bg);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 0.9rem;
+      border: 1px solid var(--border);
+    }
+    
+    .modal-backdrop {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 999;
+      display: none;
+    }
+    
+    .modal-backdrop.show {
+      display: block;
+    }
+    
+    /* ============================================
+       Loading States & Animations
+       ============================================ */
+    .loading-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(var(--bg), 0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      border-radius: inherit;
+    }
+    
+    .loading-spinner {
+      width: 40px;
+      height: 40px;
+      border: 4px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    
+    /* Skeleton loading for list items */
+    .skeleton {
+      background: linear-gradient(
+        90deg,
+        var(--bg) 25%,
+        var(--border) 50%,
+        var(--bg) 75%
+      );
+      background-size: 200% 100%;
+      animation: skeleton-loading 1.5s ease-in-out infinite;
+      border-radius: 8px;
+    }
+    
+    @keyframes skeleton-loading {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    
+    /* Fade in animation for new elements */
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    .fade-in-up {
+      animation: fadeInUp 0.3s ease;
+    }
+    
+    /* Pulse animation for notifications */
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+    
+    .pulse {
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    
+    /* ============================================
+       Toast Notifications
+       ============================================ */
+    .toast-container {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 1001;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+    
+    .toast {
+      background: var(--card);
+      padding: 12px 16px;
+      border-radius: 8px;
+      box-shadow: var(--shadow-lg);
+      border-left: 4px solid var(--primary);
+      min-width: 250px;
+      max-width: 400px;
+      pointer-events: auto;
+      animation: slideInRight 0.3s ease;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .toast.success {
+      border-left-color: var(--success);
+    }
+    
+    .toast.error {
+      border-left-color: var(--danger);
+    }
+    
+    .toast.warning {
+      border-left-color: var(--warning);
+    }
+    
+    @keyframes slideInRight {
+      from {
+        transform: translateX(100%);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+    
+    @media (max-width: 680px) {
+      .toast-container {
+        left: 12px;
+        right: 12px;
+        bottom: 12px;
+      }
+      
+      .toast {
+        min-width: auto;
+        width: 100%;
+      }
+    }
   </style>
 </head>
 <body>
@@ -790,6 +989,9 @@
       <div class="top-actions">
         <button id="themeToggle" class="theme-toggle" aria-label="Cambiar tema" data-tooltip="Cambiar tema">
           <span id="themeIcon">🌙</span>
+        </button>
+        <button id="helpToggle" class="theme-toggle" aria-label="Ver atajos de teclado" data-tooltip="Atajos (?)">
+          <span>❓</span>
         </button>
         <div class="status online" role="status" aria-label="Estado del sistema: en línea" title="Sistema en línea"></div>
         <nav class="mode-switch" role="tablist" aria-label="Navegación principal">
@@ -987,6 +1189,46 @@
         <pre id="rawContent" class="log"></pre>
       </div>
     </div>
+    
+    <div id="shortcutsBackdrop" class="modal-backdrop">
+      <div class="shortcuts-help">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 16px;">
+          <h3>Atajos de teclado</h3>
+          <button id="closeShortcuts" class="btn small">✕</button>
+        </div>
+        <div class="shortcut-item">
+          <span>Cambiar tema</span>
+          <span class="shortcut-key">Ctrl/⌘ + D</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Buscar resultados</span>
+          <span class="shortcut-key">Ctrl/⌘ + K</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Ir a Quick</span>
+          <span class="shortcut-key">1</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Ir a Encuesta</span>
+          <span class="shortcut-key">2</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Ir a Resultados</span>
+          <span class="shortcut-key">3</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Cerrar modal / Limpiar búsqueda</span>
+          <span class="shortcut-key">Esc</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Ver atajos</span>
+          <span class="shortcut-key">?</span>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Toast Notifications Container -->
+    <div id="toastContainer" class="toast-container"></div>
   </div>
 </body>
 </html>
