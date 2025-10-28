@@ -165,15 +165,13 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
         )
         if ping_check.returncode != 0:
             with tasks_lock:
-                tasks[task_id]["status"] = "error"
-                tasks[task_id]["logs"].append(f"Error: No se puede alcanzar el servidor {SERVER_IP}")
+                tasks[task_id]["logs"].append(f"Advertencia: No se puede alcanzar el servidor {SERVER_IP}, continuando con pruebas...")
                 tasks[task_id]["seq"] = tasks[task_id].get("seq", 0) + 1
-            logger.error(f"Server {SERVER_IP} is not reachable")
-            return
+            logger.warning(f"Server {SERVER_IP} is not reachable, continuing with tests")
     except Exception as e:
         with tasks_lock:
-            tasks[task_id]["logs"].append(f"Error verificando servidor: {e}")
-        logger.warning(f"Server check failed: {e}")
+            tasks[task_id]["logs"].append(f"Advertencia verificando servidor: {e}, continuando con pruebas...")
+        logger.warning(f"Server check failed: {e}, continuing with tests")
 
     # Intentar metadata WiFi (no bloqueante)
     wifi_json = {}
