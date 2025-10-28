@@ -5,6 +5,17 @@
 
 (() => {
   const $ = id => document.getElementById(id);
+  
+  // Quality thresholds for visual indicators
+  const QUALITY_THRESHOLDS = {
+    DL_EXCELLENT: 50,  // Mbps - Green indicator
+    DL_GOOD: 20,       // Mbps - Yellow indicator (below is red)
+    PING_EXCELLENT: 30, // ms - Green indicator
+    PING_GOOD: 60       // ms - Yellow indicator (above is red)
+  };
+  
+  // UI Configuration
+  const MAX_SURVEY_LOGS = 30; // Maximum number of log entries to display
 
   // ===== Theme Management =====
   function initTheme() {
@@ -494,8 +505,12 @@
       card.style.animation = 'fadeIn 0.3s ease';
       
       // Add quality indicators based on metrics
-      const dlQuality = r.iperf_dl_mbps ? (r.iperf_dl_mbps > 50 ? '🟢' : r.iperf_dl_mbps > 20 ? '🟡' : '🔴') : '⚪';
-      const pingQuality = r.ping_avg ? (r.ping_avg < 30 ? '🟢' : r.ping_avg < 60 ? '🟡' : '🔴') : '⚪';
+      const dlQuality = r.iperf_dl_mbps ? 
+        (r.iperf_dl_mbps > QUALITY_THRESHOLDS.DL_EXCELLENT ? '🟢' : 
+         r.iperf_dl_mbps > QUALITY_THRESHOLDS.DL_GOOD ? '🟡' : '🔴') : '⚪';
+      const pingQuality = r.ping_avg ? 
+        (r.ping_avg < QUALITY_THRESHOLDS.PING_EXCELLENT ? '🟢' : 
+         r.ping_avg < QUALITY_THRESHOLDS.PING_GOOD ? '🟡' : '🔴') : '⚪';
       
       card.innerHTML = `
         <div style="flex:1; min-width:160px;">
@@ -614,10 +629,13 @@
       };
       if(stageLabel) {
         stageLabel.textContent = stageNames[stage] || stage;
-        // Add color coding for stages
-        stageLabel.style.color = stage === 'ping' ? '#ef4444' : 
-                                  stage === 'download' ? '#0b74ff' : 
-                                  stage === 'upload' ? '#06b6d4' : 'var(--muted)';
+        // Add color coding for stages using CSS variables
+        const stageColors = {
+          ping: 'var(--danger)',      // Red for ping
+          download: 'var(--primary)', // Blue for download  
+          upload: '#06b6d4'           // Cyan for upload
+        };
+        stageLabel.style.color = stageColors[stage] || 'var(--muted)';
         stageLabel.style.fontWeight = '600';
       }
     }
@@ -907,7 +925,7 @@
     
     // Update survey logs if available
     if(dataContainer.logs && Array.isArray(dataContainer.logs) && surveyLog) {
-      const recentLogs = dataContainer.logs.slice(-30); // Last 30 logs
+      const recentLogs = dataContainer.logs.slice(-MAX_SURVEY_LOGS); // Last N logs
       surveyLog.textContent = recentLogs.join('\n');
       // Auto-scroll to bottom
       surveyLog.scrollTop = surveyLog.scrollHeight;
