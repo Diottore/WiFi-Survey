@@ -13,6 +13,7 @@ import re
 import time
 import logging
 import configparser
+import copy
 from datetime import datetime
 from flask import Flask, request, jsonify, send_file, render_template, abort, Response
 from flask_cors import CORS
@@ -571,13 +572,13 @@ def start_survey():
                                 break
                             if child.get("status") in ("finished", "error", "cancelled"):
                                 break
-                            # Copy partial data from child to parent (deep copy)
+                            # Copy partial data from child to parent (deep copy for nested dicts)
                             if child.get("partial"):
-                                tasks[parent_id]["partial"] = child["partial"].copy()
+                                tasks[parent_id]["partial"] = copy.deepcopy(child["partial"])
                                 tasks[parent_id]["seq"] = tasks[parent_id].get("seq", 0) + 1
                             # Copy samples if available (deep copy to avoid concurrent modification)
                             if child.get("samples"):
-                                tasks[parent_id]["samples"] = list(child["samples"])
+                                tasks[parent_id]["samples"] = copy.deepcopy(child["samples"])
                 except Exception as e:
                     logger.error(f"Error in propagate_partial_updates: {e}")
             return propagate_partial_updates
