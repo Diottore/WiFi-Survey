@@ -289,6 +289,16 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
     ping_thread = threading.Thread(target=ping_worker, daemon=True)
     ping_thread.start()
 
+    # Wait for ping to complete before starting download
+    try:
+        ping_thread.join(timeout=duration + 5)
+        if ping_thread.is_alive():
+            with tasks_lock:
+                tasks[task_id]["logs"].append("Warning: ping thread did not finish in time")
+    except Exception as e:
+        with tasks_lock:
+            tasks[task_id]["logs"].append(f"Error joining ping thread: {e}")
+
     # iperf3 DL
     dl_mbps_final = 0.0
     try:
@@ -396,15 +406,6 @@ def worker_run_point(task_id, device, point, run_index, duration, parallel):
     except Exception as e:
         with tasks_lock:
             tasks[task_id]["logs"].append(f"iperf3 UL error: {e}")
-
-    try:
-        ping_thread.join(timeout=duration + 5)
-        if ping_thread.is_alive():
-            with tasks_lock:
-                tasks[task_id]["logs"].append("Warning: ping thread did not finish in time")
-    except Exception as e:
-        with tasks_lock:
-            tasks[task_id]["logs"].append(f"Error joining ping thread: {e}")
 
     with tasks_lock:
         partial_ping = tasks[task_id].get("partial", {})
