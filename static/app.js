@@ -1,5 +1,7 @@
 // static/app.js v13 — Migración a Apache ECharts (live + resultados).
 // Mantiene SSE/polling, filtros, exportaciones y layout mobile-first.
+// Stage tracking: Live chart resets time for each stage (ping/download/upload),
+// displaying each stage's own timeline from 0 to configured duration seconds.
 
 (() => {
   const $ = id => document.getElementById(id);
@@ -480,7 +482,9 @@
   // ECharts: Estabilidad en vivo
   // ======================
   let liveChart = null;
-  let liveSamples = []; // {t, dl, ul, ping}
+  let liveSamples = []; // {t, dl, ul, ping, stage}
+  let currentStage = null; // Track current stage
+  
   function ensureLiveMiniChart(){
     const el = $('liveMiniChart'); if(!el) return;
     if(liveChart) return;
@@ -505,10 +509,19 @@
     });
     window.addEventListener('resize', ()=> liveChart && liveChart.resize());
   }
-  function liveChartPush(t, dl, ul, ping){
+  
+  function liveChartPush(t, dl, ul, ping, stage){
     ensureLiveMiniChart();
     if(!liveChart) return;
-    liveSamples.push({t, dl, ul, ping});
+    
+    // If stage changed, reset the chart to show only the current stage
+    // This ensures each stage (ping/download/upload) displays its own 0-duration timeline
+    if(stage && stage !== currentStage) {
+      currentStage = stage;
+      liveSamples = []; // Clear samples when stage changes
+    }
+    
+    liveSamples.push({t, dl, ul, ping, stage});
     if(liveSamples.length > 600) liveSamples.shift();
     const xs = liveSamples.map(s=> s.t);
     liveChart.setOption({
@@ -520,8 +533,10 @@
       ]
     }, { notMerge:false, lazyUpdate:true });
   }
+  
   function liveChartReset(){
     liveSamples = [];
+    currentStage = null;
     if(liveChart){
       liveChart.setOption({
         xAxis:{data:[]},
@@ -741,10 +756,11 @@
     const p50=num(partial.ping_p50_ms), p95=num(partial.ping_p95_ms), loss=num(partial.ping_loss_pct);
     const progress=Number(partial.progress_pct || partial.progress || 0);
     const elapsed=Number(partial.elapsed_s || 0);
+    const stage=partial.stage || 'unknown';
 
     // Mostrar panel y actualizar mini gráfica
     if(liveVisuals && !liveVisuals.classList.contains('show')) { liveVisuals.classList.add('show'); ensureLiveMiniChart(); }
-    liveChartPush(elapsed, dl, ul, pingAvg);
+    liveChartPush(elapsed, dl, ul, pingAvg, stage);
 
     // Lecturas instantáneas
     instDlEl && (instDlEl.textContent = `${dl.toFixed(2)} Mbps`);
@@ -763,7 +779,11 @@
     }
     progressPct && (progressPct.textContent = `${progress}%`);
     updateRemaining(elapsed, partial);
-    liveSummary && (liveSummary.textContent = `Ejecutando... ${progress}%`);
+    
+    // Update live summary with current stage
+    const stageNames = { ping: 'Ping', download: 'Download', upload: 'Upload' };
+    const stageName = stageNames[stage] || stage;
+    liveSummary && (liveSummary.textContent = `Ejecutando ${stageName}... ${progress}%`);
   }
 
   function handleFinalResult(res){
