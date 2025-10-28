@@ -1214,9 +1214,12 @@
 
       <!-- Live visuals (solo gráficas) -->
       <section id="liveVisuals" class="card" role="region" aria-live="polite" aria-label="Panel de visualización en vivo">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
           <strong>Panel en ejecución</strong>
-          <button id="hideLivePanel" class="btn outline" aria-label="Ocultar panel de visualización">Ocultar</button>
+          <div style="display:flex; gap:8px;">
+            <button id="clearLiveChart" class="btn outline small" aria-label="Limpiar gráfica en vivo">🗑️ Limpiar</button>
+            <button id="hideLivePanel" class="btn outline" aria-label="Ocultar panel de visualización">Ocultar</button>
+          </div>
         </div>
 
         <div style="flex:1; display:flex; flex-direction:column; gap:10px; min-width:260px; width:100%;">

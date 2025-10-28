@@ -324,11 +324,22 @@
   const runProgressFill = $('runProgressFill'), progressPct = $('progressPct'), timeRemainingEl = $('timeRemaining'), liveSummary = $('liveSummary');
   const instDlEl = $('instDl'), instUlEl = $('instUl'), instPingEl = $('instPing'), instJitterEl = $('instJitter'), instPing50El = $('instPing50'), instPing95El = $('instPing95'), instLossEl = $('instLoss');
   const showLiveQuick = $('showLiveQuick'), showLiveSurvey = $('showLiveSurvey'), hideLivePanelBtn = $('hideLivePanel');
+  const clearLiveChartBtn = $('clearLiveChart');
   
   // Hide/Show live panel handlers
   hideLivePanelBtn && hideLivePanelBtn.addEventListener('click', ()=> {
     liveVisuals && liveVisuals.classList.remove('show');
   });
+  
+  // Clear live chart handler
+  clearLiveChartBtn && clearLiveChartBtn.addEventListener('click', ()=> {
+    if(confirm('¿Limpiar la gráfica en vivo? Esto no afectará los resultados guardados.')){
+      liveChartReset();
+      liveSummary && (liveSummary.textContent = 'Gráfica limpiada - Esperando nueva ejecución...');
+      showToast('Gráfica en vivo limpiada', 'success');
+    }
+  });
+  
   showLiveQuick && showLiveQuick.addEventListener('click', ()=> {
     if(liveVisuals && !liveVisuals.classList.contains('show')) {
       liveVisuals.classList.add('show');
@@ -356,6 +367,58 @@
   let results = [];
   let currentPage = 1;
   const RESULTS_PER_PAGE = 20;
+  const STORAGE_KEY = 'wifiSurveyResults';
+  const MAX_STORED_RESULTS = 500; // Limit localStorage size
+
+  // ===== LocalStorage Persistence =====
+  function saveResultsToStorage() {
+    try {
+      // Keep only the most recent results to avoid localStorage quota issues
+      const toSave = results.slice(0, MAX_STORED_RESULTS);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+      return true;
+    } catch (e) {
+      console.error('Error saving to localStorage:', e);
+      // If quota exceeded, try saving fewer results
+      if (e.name === 'QuotaExceededError') {
+        try {
+          const reduced = results.slice(0, 100);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(reduced));
+          showToast('Espacio limitado: solo se guardaron los 100 resultados más recientes', 'warning');
+        } catch (e2) {
+          console.error('Could not save even reduced results:', e2);
+        }
+      }
+      return false;
+    }
+  }
+
+  function loadResultsFromStorage() {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          results = parsed;
+          console.log(`Loaded ${results.length} results from localStorage`);
+          return true;
+        }
+      }
+    } catch (e) {
+      console.error('Error loading from localStorage:', e);
+    }
+    return false;
+  }
+
+  function clearStoredResults() {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      return true;
+    } catch (e) {
+      console.error('Error clearing localStorage:', e);
+      return false;
+    }
+  }
 
   // Pagination controls
   function renderPagination() {
@@ -678,6 +741,19 @@
     renderResultsList();
   });
 
+  // ===== Theme Updates for Charts =====
+  // This function is called by the theme manager when theme changes
+  window.updateChartsTheme = function(theme) {
+    // ECharts will automatically adapt to CSS theme changes
+    // but we can force a redraw if needed
+    try {
+      if (liveChart) liveChart.resize();
+      if (resultsChart) resultsChart.resize();
+    } catch(e) {
+      console.warn('Error updating charts theme:', e);
+    }
+  };
+
   // ======================
   // SSE / Polling
   // ======================
@@ -837,6 +913,9 @@
   function pushResultToList(r){
     results.unshift(r); 
     if(results.length>500) results.pop();
+    
+    // Save to localStorage
+    saveResultsToStorage();
     
     // Reset to first page when new result is added
     currentPage = 1;
@@ -1208,11 +1287,13 @@
     
     results=[]; 
     currentPage = 1;
+    clearStoredResults(); // Clear localStorage
     resultsList && (resultsList.innerHTML='');
     const paginationEl = $('pagination');
     if (paginationEl) paginationEl.innerHTML = '';
     if(resultsChart){ resultsChart.setOption({ xAxis:{data:[]}, series:[{data:[]},{data:[]},{data:[]}] }, {notMerge:true}); }
     updateSummary(); emptyState && (emptyState.style.display='block');
+    showToast('Resultados limpiados correctamente', 'success');
   });
   
   exportCsvWideBtn?.addEventListener('click', async ()=>{
@@ -1327,8 +1408,27 @@
     totalTests && (totalTests.textContent = results.length.toString());
   }
 
-  // Init mínimos
-  updateSummary();
+  // ===== Initialization =====
+  // Load results from localStorage on startup
+  function initializeApp() {
+    const loaded = loadResultsFromStorage();
+    if (loaded && results.length > 0) {
+      console.log(`Restored ${results.length} results from previous session`);
+      renderResultsList();
+      updateSummary();
+      // Rebuild chart if we're on results page
+      if (!panelResults?.classList.contains('hidden')) {
+        ensureResultsChart();
+        rebuildResultsChart();
+      }
+      showToast(`Se cargaron ${results.length} resultados de la sesión anterior`, 'success', 4000);
+    } else {
+      updateSummary();
+    }
+  }
+
+  // Initialize app
+  initializeApp();
   
   // Load and display test configuration
   async function loadTestConfig(){
