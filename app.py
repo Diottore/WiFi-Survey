@@ -589,7 +589,41 @@ def start_survey():
                     child_id = str(uuid.uuid4())
                     with tasks_lock:
                         tasks[child_id] = {"status":"queued", "total":1, "done":0, "logs":[], "results": [], "partial": {}, "seq": 0}
+                        # Log which point is starting
+                        tasks[p_id]["logs"].append(f"Starting point {pt} (run {rep+1})")
+                        tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
+                    
+                    # Thread to propagate partial updates from child to parent during execution
+                    def propagate_partial_updates(parent_id, child_id):
+                        """Copy partial data from child task to parent task for live updates"""
+                        while True:
+                            time.sleep(0.3)  # Update every 300ms
+                            with tasks_lock:
+                                child = tasks.get(child_id)
+                                if not child:
+                                    break
+                                if child.get("status") in ("finished", "error", "cancelled"):
+                                    break
+                                # Copy partial data from child to parent
+                                if child.get("partial"):
+                                    tasks[p_id]["partial"] = child["partial"].copy()
+                                    tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
+                                # Copy samples if available
+                                if child.get("samples"):
+                                    tasks[p_id]["samples"] = child["samples"]
+                    
+                    propagate_thread = threading.Thread(
+                        target=propagate_partial_updates,
+                        args=(p_id, child_id),
+                        daemon=True
+                    )
+                    propagate_thread.start()
+                    
                     worker_run_point(child_id, device, pt, rep+1, IPERF_DURATION, IPERF_PARALLEL)
+                    
+                    # Wait for propagation thread to finish
+                    propagate_thread.join(timeout=2)
+                    
                     with tasks_lock:
                         child_result = tasks[child_id].get("result")
                         if child_result:
@@ -597,6 +631,9 @@ def start_survey():
                             tasks[p_id]["done"] += 1
                             tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
                             tasks[p_id]["logs"].append(f"Point done: {pt} ({tasks[p_id]['done']}/{tasks[p_id]['total']})")
+                        # Clear partial data after point is done so it doesn't persist to next point
+                        tasks[p_id]["partial"] = {}
+                        tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
             with tasks_lock:
                 tasks[p_id]["status"] = "finished"
                 tasks[p_id]["seq"] = tasks[p_id].get("seq", 0) + 1
