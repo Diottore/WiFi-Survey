@@ -22,7 +22,7 @@ AGENTS = [
 ]
 SERVER_IP = "192.168.1.10"
 TEST_DURATION = 60
-PARALLEL_STREAMS = 4
+PARALLEL_STREAMS = 8
 
 OUTPUT_CSV = "iperf_results.csv"
 LOCK = threading.Lock()
